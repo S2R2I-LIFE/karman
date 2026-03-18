@@ -35,6 +35,7 @@ from web.email_sender import EmailSender
 from web.auth_decorators import login_required, admin_required
 from connectors.eapi_connector import EAPIConnector
 from connectors.netmiko_connector import NetmikoConnector
+from core.telemetry import DeviceTelemetry
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -84,7 +85,6 @@ _ensure_telemetry_cache_table()
 
 def _collect_device_telemetry(device_info, username, password):
     """Collect telemetry from a single device. Called from thread pool."""
-    from core.telemetry import DeviceTelemetry
     hostname, ip, mgmt_type, gnmi_port = device_info
     device_data = {'hostname': hostname, 'ip': ip, 'telemetry': {'reachable': False}}
 
@@ -2375,8 +2375,6 @@ def internal_error(error):
 def api_telemetry_debug(hostname):
     """Debug telemetry collection for a specific device"""
     try:
-        from core.telemetry import DeviceTelemetry
-
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT ip_address, management_type FROM devices WHERE hostname = ?", (hostname,))
@@ -2469,6 +2467,235 @@ def api_telemetry_devices():
     except Exception as e:
         app.logger.error(f"Telemetry API error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/devices/<hostname>/live-metrics')
+@login_required
+def api_live_metrics(hostname):
+    """Return live metrics for a single device section (lazy-loaded by the Metrics tab)."""
+    section  = request.args.get('section', 'interfaces')
+    username = request.args.get('username') or os.environ.get('DEFAULT_DEVICE_USERNAME', 'admin')
+    password = request.args.get('password', os.environ.get('DEFAULT_DEVICE_PASSWORD', ''))
+
+    device = inventory_mgr.get_device(hostname)
+    if not device:
+        return jsonify({'error': 'Device not found'}), 404
+
+    mgmt = device.management_type.value
+    ip   = device.ip_address
+
+    try:
+        if mgmt == 'eapi':
+            connector = EAPIConnector(ip, username, password, timeout=15)
+            if not connector.connect():
+                return jsonify({'error': 'eAPI connection failed'}), 503
+            data = _live_metrics_eapi(connector, section)
+
+        elif mgmt == 'ssh':
+            connector = NetmikoConnector(ip, username, password, timeout=15)
+            if not connector.connect():
+                return jsonify({'error': 'SSH connection failed'}), 503
+            data = _live_metrics_ssh(connector, section)
+            connector.disconnect()
+
+        else:
+            return jsonify({'success': True, 'section': section,
+                            'data': None, 'unavailable': True,
+                            'reason': f'Live metrics not available for {mgmt} management type'})
+
+        return jsonify({'success': True, 'section': section, 'data': data})
+
+    except Exception as e:
+        app.logger.error(f"Live metrics error [{hostname}/{section}]: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+def _live_metrics_eapi(connector, section):
+    """Collect one metrics section via eAPI JSON commands."""
+    if section == 'interfaces':
+        res = connector.execute_commands(['show interfaces', 'show interfaces counters rates'])
+        intfs_raw  = (res[0] or {}).get('interfaces', {}) if res else {}
+        rates_raw  = (res[1] or {}).get('interfaces', {}) if res and len(res) > 1 else {}
+        rows = []
+        for name, d in sorted(intfs_raw.items()):
+            if name.startswith('Management'):
+                continue
+            ctr   = d.get('interfaceCounters', {})
+            rates = rates_raw.get(name, {})
+            rows.append({
+                'name':        name,
+                'status':      d.get('interfaceStatus', ''),
+                'line_proto':  d.get('lineProtocolStatus', ''),
+                'description': d.get('description', ''),
+                'bandwidth':   d.get('bandwidth', 0),
+                'in_errors':   ctr.get('inputErrorsDetail', {}).get('runtFrames', 0) + ctr.get('totalInErrors', ctr.get('inErrors', 0)),
+                'out_errors':  ctr.get('outputErrorsDetail', {}).get('collisions', 0) + ctr.get('totalOutErrors', ctr.get('outErrors', 0)),
+                'in_octets':   ctr.get('inOctets', 0),
+                'out_octets':  ctr.get('outOctets', 0),
+                'in_bps':      rates.get('inBitsRate', 0),
+                'out_bps':     rates.get('outBitsRate', 0),
+            })
+        return {'interfaces': rows}
+
+    elif section == 'bgp':
+        res = connector.execute_commands(['show ip bgp summary'])
+        vrfs_raw = (res[0] or {}).get('vrfs', {}) if res else {}
+        vrfs = {}
+        for vrf_name, vrf in vrfs_raw.items():
+            peers = []
+            for peer_ip, p in vrf.get('peers', {}).items():
+                peers.append({
+                    'neighbor':  peer_ip,
+                    'asn':       p.get('asn', ''),
+                    'state':     p.get('peerState', ''),
+                    'prefixes_received': p.get('prefixReceived', 0),
+                    'uptime':    p.get('upDownTime', 0),
+                    'msg_rcvd':  p.get('msgReceived', 0),
+                    'msg_sent':  p.get('msgSent', 0),
+                })
+            vrfs[vrf_name] = {
+                'router_id': vrf.get('routerId', ''),
+                'peers': peers,
+            }
+        return {'vrfs': vrfs}
+
+    elif section == 'lldp':
+        res = connector.execute_commands(['show lldp neighbors detail'])
+        neighbors_raw = (res[0] or {}).get('lldpNeighbors', []) if res else []
+        neighbors = []
+        for n in neighbors_raw:
+            caps = n.get('systemCapabilities', {})
+            cap_str = ', '.join(k[:1].upper() for k, v in caps.items() if v)
+            neighbors.append({
+                'local_port':   n.get('port', ''),
+                'neighbor':     n.get('neighborDevice', ''),
+                'neighbor_port': n.get('neighborPort', ''),
+                'description':  n.get('neighborPortDescription', ''),
+                'capabilities': cap_str,
+            })
+        return {'neighbors': neighbors}
+
+    elif section == 'routing':
+        res = connector.execute_commands(['show ip route summary'])
+        vrfs_raw = (res[0] or {}).get('vrfs', {}) if res else {}
+        vrfs = {}
+        for vrf_name, vrf in vrfs_raw.items():
+            protocols = {}
+            for proto, pdata in vrf.get('routes', {}).items():
+                count = pdata.get('total', pdata) if isinstance(pdata, dict) else int(pdata)
+                if count:
+                    protocols[proto] = count
+            vrfs[vrf_name] = {
+                'total':     vrf.get('allRoutes', sum(protocols.values())),
+                'protocols': protocols,
+            }
+        return {'vrfs': vrfs}
+
+    elif section == 'environment':
+        res = connector.execute_commands(['show system environment all'])
+        data = res[0] if res else {}
+
+        temp_sensors = []
+        for s in data.get('tempSensors', []):
+            temp_sensors.append({
+                'name':     s.get('name', ''),
+                'current':  s.get('currentTemperature', 0),
+                'warning':  s.get('overheatThreshold', 75),
+                'critical': s.get('criticalThreshold', 95),
+                'status':   'warning' if s.get('inAlertState') else 'ok',
+            })
+
+        psus = []
+        for slot, p in data.get('powerSupplies', {}).items():
+            psus.append({
+                'slot':   slot,
+                'state':  p.get('state', ''),
+                'output_watts': round(p.get('outputPower', 0), 1),
+                'capacity_watts': p.get('capacity', 0),
+            })
+
+        fans = []
+        for slot, f in data.get('fans', {}).items():
+            fans.append({
+                'slot':   slot,
+                'status': f.get('status', ''),
+                'speed_pct': f.get('speed', 0),
+            })
+
+        return {'temperature': temp_sensors, 'power_supplies': psus, 'fans': fans}
+
+    return {}
+
+
+def _live_metrics_ssh(connector, section):
+    """Collect one metrics section via SSH text output."""
+    if section == 'interfaces':
+        out = connector.execute_command('show interfaces status')
+        rows = []
+        for line in out.splitlines():
+            parts = line.split()
+            if not parts or not (parts[0].startswith('Et') or parts[0].startswith('Po')):
+                continue
+            rows.append({
+                'name':       parts[0],
+                'status':     parts[2] if len(parts) > 2 else '',
+                'line_proto': '',
+                'description': ' '.join(parts[3:-2]) if len(parts) > 5 else '',
+                'bandwidth':  0, 'in_errors': 0, 'out_errors': 0,
+                'in_octets': 0, 'out_octets': 0, 'in_bps': 0, 'out_bps': 0,
+            })
+        return {'interfaces': rows}
+
+    elif section == 'bgp':
+        out = connector.execute_command('show ip bgp summary')
+        peers = []
+        in_peers = False
+        for line in out.splitlines():
+            if 'Neighbor' in line and 'AS' in line:
+                in_peers = True
+                continue
+            if in_peers and line.strip():
+                parts = line.split()
+                if len(parts) >= 9 and '.' in parts[0]:
+                    peers.append({
+                        'neighbor': parts[0], 'asn': parts[2],
+                        'state': parts[8], 'prefixes_received': 0,
+                        'uptime': parts[7], 'msg_rcvd': 0, 'msg_sent': 0,
+                    })
+        return {'vrfs': {'default': {'router_id': '', 'peers': peers}}}
+
+    elif section == 'lldp':
+        out = connector.execute_command('show lldp neighbors')
+        neighbors = []
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 4 and parts[0].startswith('Et'):
+                neighbors.append({
+                    'local_port': parts[0], 'neighbor': parts[1],
+                    'neighbor_port': parts[2], 'description': '',
+                    'capabilities': parts[3] if len(parts) > 3 else '',
+                })
+        return {'neighbors': neighbors}
+
+    elif section == 'routing':
+        out = connector.execute_command('show ip route summary')
+        total, protocols = 0, {}
+        for line in out.splitlines():
+            m = re.search(r'Total Routes:\s*(\d+)', line)
+            if m:
+                total = int(m.group(1))
+            for proto in ('connected', 'static', 'ospf', 'bgp', 'isis'):
+                m = re.search(rf'{proto}\s+(\d+)', line, re.IGNORECASE)
+                if m:
+                    protocols[proto] = int(m.group(1))
+        return {'vrfs': {'default': {'total': total, 'protocols': protocols}}}
+
+    elif section == 'environment':
+        out = connector.execute_command('show system environment all')
+        return {'temperature': DeviceTelemetry.parse_temperature(out).get('sensors', []),
+                'power_supplies': [], 'fans': []}
+
+    return {}
+
 
 @app.route('/api/telemetry/cached')
 @login_required

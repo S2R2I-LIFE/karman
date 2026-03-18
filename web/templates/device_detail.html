@@ -112,6 +112,13 @@
             <i class="bi bi-terminal"></i> CLI
         </button>
     </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="metrics-tab" data-bs-toggle="tab"
+                data-bs-target="#metrics-pane" type="button" role="tab"
+                onclick="initMetricsTab()">
+            <i class="bi bi-speedometer2"></i> Metrics
+        </button>
+    </li>
     {% if device.management_type.value == 'gnmi' %}
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="telemetry-tab" data-bs-toggle="tab"
@@ -301,6 +308,132 @@
             </div>
         </div>
     </div>
+
+    <!-- ══ Metrics Tab ══ -->
+    <div class="tab-pane fade" id="metrics-pane" role="tabpanel">
+        <div id="metrics-unavailable" class="text-center text-muted py-4" style="display:none;">
+            <i class="bi bi-exclamation-circle fs-3 d-block mb-2"></i>
+            <span id="metrics-unavailable-msg">Live metrics require eAPI or SSH management.</span>
+        </div>
+        <div id="metrics-accordion" class="accordion accordion-flush">
+
+            <!-- Interfaces -->
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#mc-interfaces"
+                            onclick="loadMetricSection('interfaces')">
+                        <i class="bi bi-ethernet me-2"></i> Interfaces
+                        <span class="ms-2 badge bg-secondary" id="mc-interfaces-badge" style="display:none;"></span>
+                    </button>
+                </h2>
+                <div id="mc-interfaces" class="accordion-collapse collapse">
+                    <div class="accordion-body p-2">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <small class="text-muted" id="mc-interfaces-ts"></small>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="loadMetricSection('interfaces', true)">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
+                        </div>
+                        <div id="mc-interfaces-body"><div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm"></div></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- BGP -->
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#mc-bgp"
+                            onclick="loadMetricSection('bgp')">
+                        <i class="bi bi-diagram-3 me-2"></i> BGP Peers
+                        <span class="ms-2 badge bg-secondary" id="mc-bgp-badge" style="display:none;"></span>
+                    </button>
+                </h2>
+                <div id="mc-bgp" class="accordion-collapse collapse">
+                    <div class="accordion-body p-2">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <small class="text-muted" id="mc-bgp-ts"></small>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="loadMetricSection('bgp', true)">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
+                        </div>
+                        <div id="mc-bgp-body"><div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm"></div></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- LLDP -->
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#mc-lldp"
+                            onclick="loadMetricSection('lldp')">
+                        <i class="bi bi-share me-2"></i> LLDP Neighbors
+                        <span class="ms-2 badge bg-secondary" id="mc-lldp-badge" style="display:none;"></span>
+                    </button>
+                </h2>
+                <div id="mc-lldp" class="accordion-collapse collapse">
+                    <div class="accordion-body p-2">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <small class="text-muted" id="mc-lldp-ts"></small>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="loadMetricSection('lldp', true)">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
+                        </div>
+                        <div id="mc-lldp-body"><div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm"></div></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Routing -->
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#mc-routing"
+                            onclick="loadMetricSection('routing')">
+                        <i class="bi bi-signpost-split me-2"></i> Routing Summary
+                        <span class="ms-2 badge bg-secondary" id="mc-routing-badge" style="display:none;"></span>
+                    </button>
+                </h2>
+                <div id="mc-routing" class="accordion-collapse collapse">
+                    <div class="accordion-body p-2">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <small class="text-muted" id="mc-routing-ts"></small>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="loadMetricSection('routing', true)">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
+                        </div>
+                        <div id="mc-routing-body"><div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm"></div></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Environment -->
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#mc-environment"
+                            onclick="loadMetricSection('environment')">
+                        <i class="bi bi-thermometer-half me-2"></i> Environment
+                        <span class="ms-2 badge bg-secondary" id="mc-environment-badge" style="display:none;"></span>
+                    </button>
+                </h2>
+                <div id="mc-environment" class="accordion-collapse collapse">
+                    <div class="accordion-body p-2">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <small class="text-muted" id="mc-environment-ts"></small>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="loadMetricSection('environment', true)">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
+                        </div>
+                        <div id="mc-environment-body"><div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm"></div></div></div>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /accordion -->
+    </div><!-- /metrics-pane -->
 
     <!-- ══ Telemetry Tab (gNMI only) ══ -->
     {% if device.management_type.value == 'gnmi' %}
@@ -665,5 +798,226 @@ function renderFlapsTable(data) {
         <tbody>${rows}</tbody></table>`;
 }
 {% endif %}
+
+// ── Metrics Tab ──────────────────────────────────────────────────────────────
+const DEVICE_HOSTNAME = '{{ device.hostname }}';
+const MGMT_TYPE       = '{{ device.management_type.value }}';
+const metricsLoaded   = {};  // section → true once loaded
+
+function initMetricsTab() {
+    if (MGMT_TYPE !== 'eapi' && MGMT_TYPE !== 'ssh') {
+        document.getElementById('metrics-accordion').style.display = 'none';
+        document.getElementById('metrics-unavailable').style.display = '';
+        document.getElementById('metrics-unavailable-msg').textContent =
+            `Live metrics require eAPI or SSH management (this device uses ${MGMT_TYPE}).`;
+    }
+}
+
+function loadMetricSection(section, force = false) {
+    if (metricsLoaded[section] && !force) return;
+    if (MGMT_TYPE !== 'eapi' && MGMT_TYPE !== 'ssh') return;
+
+    const body = document.getElementById(`mc-${section}-body`);
+    body.innerHTML = '<div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm"></div> Loading…</div>';
+
+    const username = sessionStorage.getItem('deviceUsername') || '';
+    const password = sessionStorage.getItem('devicePassword') || '';
+    const params   = new URLSearchParams({ section, username, password });
+
+    fetch(`/api/devices/${DEVICE_HOSTNAME}/live-metrics?${params}`)
+        .then(r => r.json())
+        .then(resp => {
+            if (resp.unavailable) {
+                body.innerHTML = `<div class="text-muted small p-2"><i class="bi bi-info-circle"></i> ${resp.reason}</div>`;
+                return;
+            }
+            if (resp.error) {
+                body.innerHTML = `<div class="alert alert-danger small p-2">${escapeHtml(resp.error)}</div>`;
+                return;
+            }
+            metricsLoaded[section] = true;
+            document.getElementById(`mc-${section}-ts`).textContent =
+                'Updated: ' + new Date().toLocaleTimeString();
+            renderMetricSection(section, resp.data);
+        })
+        .catch(err => {
+            body.innerHTML = `<div class="alert alert-danger small p-2">Request failed: ${escapeHtml(String(err))}</div>`;
+        });
+}
+
+function renderMetricSection(section, data) {
+    const body = document.getElementById(`mc-${section}-body`);
+    const badge = document.getElementById(`mc-${section}-badge`);
+
+    if (section === 'interfaces') {
+        const rows = (data.interfaces || []);
+        badge.textContent = rows.length;
+        badge.style.display = '';
+        if (!rows.length) { body.innerHTML = '<p class="text-muted small mb-0">No interfaces found.</p>'; return; }
+        const trs = rows.map(i => {
+            const sc = i.status === 'connected' ? 'success' : i.status === 'disabled' ? 'secondary' : 'danger';
+            const bw = i.bandwidth >= 1e9 ? (i.bandwidth/1e9)+'G' : i.bandwidth >= 1e6 ? (i.bandwidth/1e6)+'M' : (i.bandwidth||'—');
+            const inR  = fmtBps(i.in_bps);
+            const outR = fmtBps(i.out_bps);
+            const errs = (i.in_errors||0) + (i.out_errors||0);
+            const errBadge = errs > 0 ? `<span class="badge bg-warning text-dark">${errs}</span>` : '<span class="text-muted">—</span>';
+            return `<tr>
+                <td class="font-monospace small">${escapeHtml(i.name)}</td>
+                <td><span class="badge bg-${sc}" style="font-size:0.7rem;">${escapeHtml(i.status||'unknown')}</span></td>
+                <td class="small text-muted">${escapeHtml(i.description||'—')}</td>
+                <td class="small text-end">${bw}</td>
+                <td class="small text-end text-primary">${inR}</td>
+                <td class="small text-end text-success">${outR}</td>
+                <td class="small text-end">${errBadge}</td>
+            </tr>`;
+        }).join('');
+        body.innerHTML = `<div class="table-responsive"><table class="table table-sm table-hover mb-0" style="font-size:0.82rem;">
+            <thead><tr>
+                <th>Interface</th><th>Status</th><th>Description</th>
+                <th class="text-end">Speed</th><th class="text-end">In</th>
+                <th class="text-end">Out</th><th class="text-end">Errors</th>
+            </tr></thead><tbody>${trs}</tbody></table></div>`;
+
+    } else if (section === 'bgp') {
+        const vrfs = data.vrfs || {};
+        const allPeers = Object.values(vrfs).flatMap(v => v.peers || []);
+        badge.textContent = allPeers.length;
+        badge.style.display = '';
+        if (!allPeers.length) { body.innerHTML = '<p class="text-muted small mb-0">BGP not configured or no peers.</p>'; return; }
+        let html = '';
+        for (const [vrf, vdata] of Object.entries(vrfs)) {
+            if (!vdata.peers.length) continue;
+            const trs = vdata.peers.map(p => {
+                const sc = p.state === 'Established' ? 'success' : p.state === 'Active' ? 'warning' : 'danger';
+                const uptime = typeof p.uptime === 'number' ? fmtUptime(p.uptime) : (p.uptime || '—');
+                return `<tr>
+                    <td class="font-monospace small">${escapeHtml(p.neighbor)}</td>
+                    <td class="small">${escapeHtml(String(p.asn))}</td>
+                    <td><span class="badge bg-${sc}" style="font-size:0.7rem;">${escapeHtml(p.state)}</span></td>
+                    <td class="small text-end">${p.prefixes_received ?? '—'}</td>
+                    <td class="small text-muted">${uptime}</td>
+                </tr>`;
+            }).join('');
+            const vrfLabel = vrf === 'default' ? '' : `<small class="text-muted ms-1">VRF: ${escapeHtml(vrf)}</small>`;
+            html += `<div class="mb-2"><div class="small text-muted mb-1">Router-ID: ${escapeHtml(vdata.router_id||'—')}${vrfLabel}</div>
+            <div class="table-responsive"><table class="table table-sm table-hover mb-0" style="font-size:0.82rem;">
+            <thead><tr><th>Neighbor</th><th>Remote ASN</th><th>State</th><th class="text-end">Prefixes Rcvd</th><th>Uptime</th></tr></thead>
+            <tbody>${trs}</tbody></table></div></div>`;
+        }
+        body.innerHTML = html;
+
+    } else if (section === 'lldp') {
+        const neighbors = data.neighbors || [];
+        badge.textContent = neighbors.length;
+        badge.style.display = '';
+        if (!neighbors.length) { body.innerHTML = '<p class="text-muted small mb-0">No LLDP neighbors discovered.</p>'; return; }
+        const trs = neighbors.map(n => `<tr>
+            <td class="font-monospace small">${escapeHtml(n.local_port)}</td>
+            <td class="small fw-semibold">${escapeHtml(n.neighbor)}</td>
+            <td class="font-monospace small">${escapeHtml(n.neighbor_port)}</td>
+            <td class="small text-muted">${escapeHtml(n.description||'—')}</td>
+            <td class="small text-muted">${escapeHtml(n.capabilities||'—')}</td>
+        </tr>`).join('');
+        body.innerHTML = `<div class="table-responsive"><table class="table table-sm table-hover mb-0" style="font-size:0.82rem;">
+            <thead><tr><th>Local Port</th><th>Neighbor</th><th>Neighbor Port</th><th>Description</th><th>Capabilities</th></tr></thead>
+            <tbody>${trs}</tbody></table></div>`;
+
+    } else if (section === 'routing') {
+        const vrfs = data.vrfs || {};
+        const total = Object.values(vrfs).reduce((s, v) => s + (v.total||0), 0);
+        badge.textContent = total + ' routes';
+        badge.style.display = '';
+        if (!total) { body.innerHTML = '<p class="text-muted small mb-0">No routing information available.</p>'; return; }
+        let html = '';
+        for (const [vrf, vdata] of Object.entries(vrfs)) {
+            const protoRows = Object.entries(vdata.protocols || {}).map(([proto, cnt]) =>
+                `<tr><td class="small">${escapeHtml(proto)}</td><td class="small text-end fw-semibold">${cnt}</td></tr>`
+            ).join('');
+            html += `<div class="mb-3"><h6 class="small text-muted mb-1">VRF: ${escapeHtml(vrf)} &mdash; <strong>${vdata.total}</strong> total routes</h6>
+            <table class="table table-sm mb-0" style="max-width:280px;font-size:0.82rem;">
+            <thead><tr><th>Protocol</th><th class="text-end">Routes</th></tr></thead>
+            <tbody>${protoRows}</tbody></table></div>`;
+        }
+        body.innerHTML = html;
+
+    } else if (section === 'environment') {
+        const temps = data.temperature || [];
+        const psus  = data.power_supplies || [];
+        const fans  = data.fans || [];
+        const alerts = [...temps, ...psus, ...fans].filter(x => x.status && x.status !== 'ok').length;
+        badge.textContent = alerts > 0 ? `${alerts} alert${alerts>1?'s':''}` : 'OK';
+        badge.className   = `ms-2 badge bg-${alerts > 0 ? 'danger' : 'success'}`;
+        badge.style.display = '';
+
+        let html = '';
+
+        if (temps.length) {
+            const trs = temps.map(s => {
+                const sc = s.status === 'ok' ? 'success' : s.status === 'warning' ? 'warning' : 'danger';
+                return `<tr>
+                    <td class="small">${escapeHtml(s.name)}</td>
+                    <td class="small text-end fw-semibold">${s.current}°C</td>
+                    <td class="small text-end text-muted">${s.warning}°C</td>
+                    <td class="small text-end text-muted">${s.critical}°C</td>
+                    <td><span class="badge bg-${sc}" style="font-size:0.7rem;">${escapeHtml(s.status)}</span></td>
+                </tr>`;
+            }).join('');
+            html += `<h6 class="small text-muted mb-1"><i class="bi bi-thermometer"></i> Temperature Sensors</h6>
+            <div class="table-responsive mb-3"><table class="table table-sm mb-0" style="font-size:0.82rem;">
+            <thead><tr><th>Sensor</th><th class="text-end">Current</th><th class="text-end">Warning</th><th class="text-end">Critical</th><th>Status</th></tr></thead>
+            <tbody>${trs}</tbody></table></div>`;
+        }
+
+        if (psus.length) {
+            const trs = psus.map(p => {
+                const sc = p.state === 'ok' ? 'success' : 'danger';
+                return `<tr>
+                    <td class="small">PSU ${escapeHtml(p.slot)}</td>
+                    <td><span class="badge bg-${sc}" style="font-size:0.7rem;">${escapeHtml(p.state)}</span></td>
+                    <td class="small text-end">${p.output_watts}W</td>
+                    <td class="small text-end text-muted">${p.capacity_watts}W</td>
+                </tr>`;
+            }).join('');
+            html += `<h6 class="small text-muted mb-1"><i class="bi bi-plug"></i> Power Supplies</h6>
+            <div class="table-responsive mb-3"><table class="table table-sm mb-0" style="font-size:0.82rem;">
+            <thead><tr><th>Slot</th><th>State</th><th class="text-end">Output</th><th class="text-end">Capacity</th></tr></thead>
+            <tbody>${trs}</tbody></table></div>`;
+        }
+
+        if (fans.length) {
+            const trs = fans.map(f => {
+                const sc = f.status === 'ok' ? 'success' : 'danger';
+                return `<tr>
+                    <td class="small">Fan ${escapeHtml(f.slot)}</td>
+                    <td><span class="badge bg-${sc}" style="font-size:0.7rem;">${escapeHtml(f.status)}</span></td>
+                    <td class="small text-end">${f.speed_pct}%</td>
+                </tr>`;
+            }).join('');
+            html += `<h6 class="small text-muted mb-1"><i class="bi bi-wind"></i> Fans</h6>
+            <div class="table-responsive"><table class="table table-sm mb-0" style="font-size:0.82rem;">
+            <thead><tr><th>Slot</th><th>State</th><th class="text-end">Speed</th></tr></thead>
+            <tbody>${trs}</tbody></table></div>`;
+        }
+
+        if (!html) html = '<p class="text-muted small mb-0">No environment data available.</p>';
+        body.innerHTML = html;
+    }
+}
+
+function fmtBps(bps) {
+    if (!bps) return '—';
+    if (bps >= 1e9) return (bps/1e9).toFixed(1) + ' Gbps';
+    if (bps >= 1e6) return (bps/1e6).toFixed(1) + ' Mbps';
+    if (bps >= 1e3) return (bps/1e3).toFixed(1) + ' Kbps';
+    return bps + ' bps';
+}
+
+function fmtUptime(seconds) {
+    if (!seconds) return '—';
+    const d = Math.floor(seconds/86400);
+    const h = Math.floor((seconds%86400)/3600);
+    const m = Math.floor((seconds%3600)/60);
+    return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
 </script>
 {% endblock %}
