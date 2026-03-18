@@ -1514,7 +1514,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (sel) sel.value = savedSort;
     }
 
-    // Seed cachedDevices from inventory immediately — cards appear without waiting for telemetry
+    // Seed cachedDevices from inventory immediately — skeleton cards appear at once
     if (INVENTORY.length > 0) {
         cachedDevices = INVENTORY.map(d => ({
             hostname: d.hostname,
@@ -1538,8 +1538,39 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     fixWarningBadgeColors();
-    refreshTelemetry();          // Full telemetry (30s cycle)
-    refreshDeviceStatus();       // Fast status check (10s cycle)
+    refreshDeviceStatus();       // Fast TCP status check (10s cycle)
+
+    // Try the background cache first — if warm, render real data instantly
+    // and delay the next full poll so we don't hit devices twice back-to-back.
+    fetch('/api/telemetry/cached')
+        .then(r => r.json())
+        .then(data => {
+            if (data.success && data.devices && data.devices.length > 0) {
+                data.devices.forEach(updated => {
+                    const idx = cachedDevices.findIndex(d => d.hostname === updated.hostname);
+                    if (idx >= 0) {
+                        cachedDevices[idx] = { ...cachedDevices[idx], ...updated };
+                    } else {
+                        cachedDevices.push(updated);
+                    }
+                });
+                displayTelemetry(cachedDevices);
+                const ageLabel = data.age !== null ? `${data.age}s ago` : 'just now';
+                document.getElementById('lastRefreshTime').textContent =
+                    `Last updated: ${ageLabel} (background)`;
+
+                // If cache is fresh (< 25 s old), delay the next full poll so it
+                // fires ~30 s after the cache was written rather than immediately.
+                const delay = (data.age !== null && data.age < 25)
+                    ? Math.max(0, (30 - data.age) * 1000)
+                    : 0;
+                refreshTimeout = setTimeout(refreshTelemetry, delay);
+            } else {
+                // Cache empty or too old — fire full refresh immediately
+                refreshTelemetry();
+            }
+        })
+        .catch(() => refreshTelemetry());  // Cache endpoint unavailable — fall back
 });
 
 // Device Role Chart

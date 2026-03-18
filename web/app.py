@@ -9,6 +9,7 @@ import os
 import sqlite3
 import re
 import time
+import threading
 from pathlib import Path
 
 # Add parent directory to path
@@ -63,6 +64,145 @@ validator = ConfigValidator()
 # Verify configlets loaded
 initial_configlet_count = len(configlet_mgr.list_configlets())
 print(f"[INIT] Loaded {initial_configlet_count} configlets from database")
+
+# ── Background telemetry cache ────────────────────────────────────────────────
+# Shared via SQLite so all gunicorn workers read/write the same data.
+# Only one worker polls at a time (stale-check prevents duplicate polls).
+def _ensure_telemetry_cache_table():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS telemetry_cache (
+            id       INTEGER PRIMARY KEY CHECK (id = 1),
+            devices_json TEXT NOT NULL,
+            updated_at   REAL NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+_ensure_telemetry_cache_table()
+
+def _collect_device_telemetry(device_info, username, password):
+    """Collect telemetry from a single device. Called from thread pool."""
+    from core.telemetry import DeviceTelemetry
+    hostname, ip, mgmt_type, gnmi_port = device_info
+    device_data = {'hostname': hostname, 'ip': ip, 'telemetry': {'reachable': False}}
+
+    if mgmt_type == 'ssh':
+        try:
+            connector = NetmikoConnector(ip, username, password, timeout=10)
+            if connector.connect():
+                device_data['telemetry'] = DeviceTelemetry.collect_from_device(connector)
+                connector.disconnect()
+            else:
+                device_data['telemetry']['error'] = 'Connection failed'
+        except Exception as e:
+            device_data['telemetry']['error'] = str(e)
+
+    elif mgmt_type == 'eapi':
+        try:
+            connector = EAPIConnector(ip, username, password, timeout=10)
+            if connector.connect():
+                device_data['telemetry'] = DeviceTelemetry.collect_from_device(connector)
+            else:
+                device_data['telemetry']['error'] = 'Connection failed'
+        except Exception as e:
+            device_data['telemetry']['error'] = str(e)
+
+    elif mgmt_type == 'gnmi':
+        try:
+            from connectors.gnmi_connector import GNMIConnector
+            port = int(gnmi_port) if gnmi_port else 6030
+            connector = GNMIConnector(ip, port=port, username=username, password=password, timeout=10)
+            device_data['telemetry'] = DeviceTelemetry.collect_from_gnmi(connector)
+        except Exception as e:
+            device_data['telemetry']['error'] = str(e)
+
+    return device_data
+
+def _collect_all_telemetry(username, password):
+    """Collect telemetry from all devices concurrently. Returns list of device dicts."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT hostname, ip_address, management_type, gnmi_port FROM devices")
+    devices = cursor.fetchall()
+    conn.close()
+
+    if not devices:
+        return []
+
+    telemetry_data = []
+    executor = ThreadPoolExecutor(max_workers=10)
+    try:
+        futures = {executor.submit(_collect_device_telemetry, d, username, password): d for d in devices}
+        try:
+            for future in as_completed(futures, timeout=35):
+                try:
+                    telemetry_data.append(future.result())
+                except Exception as e:
+                    device = futures[future]
+                    telemetry_data.append({
+                        'hostname': device[0], 'ip': device[1],
+                        'telemetry': {'reachable': False, 'error': str(e)}
+                    })
+        except FuturesTimeoutError:
+            for future, device in futures.items():
+                if not future.done():
+                    telemetry_data.append({
+                        'hostname': device[0], 'ip': device[1],
+                        'telemetry': {'reachable': False, 'error': 'Collection timeout'}
+                    })
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    return telemetry_data
+
+def _write_telemetry_cache(devices):
+    """Write collected telemetry to the SQLite cache table."""
+    import json as _json
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("""
+            INSERT INTO telemetry_cache (id, devices_json, updated_at) VALUES (1, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET devices_json=excluded.devices_json, updated_at=excluded.updated_at
+        """, (_json.dumps(devices), time.time()))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        app.logger.error(f"[Cache] Write error: {e}")
+
+def _background_telemetry_loop():
+    """Daemon thread: keeps telemetry cache warm. Only polls when cache is stale
+    so multiple gunicorn workers don't all hit devices simultaneously."""
+    time.sleep(15)  # Let app fully start before first poll
+    while True:
+        try:
+            # Check cache age — only poll if no worker updated in the last 28 s
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT updated_at FROM telemetry_cache WHERE id=1")
+            row = cursor.fetchone()
+            conn.close()
+            age = time.time() - row[0] if row else 999
+
+            if age >= 28:
+                username = os.environ.get('DEFAULT_DEVICE_USERNAME', 'admin')
+                password = os.environ.get('DEFAULT_DEVICE_PASSWORD', '')
+                result = _collect_all_telemetry(username, password)
+                if result:
+                    _write_telemetry_cache(result)
+                    app.logger.info(f"[BG] Telemetry cache refreshed ({len(result)} devices)")
+        except Exception as e:
+            app.logger.error(f"[BG] Telemetry loop error: {e}")
+        time.sleep(15)  # Check every 15 s; poll only when stale
+
+_bg_telemetry_thread = threading.Thread(
+    target=_background_telemetry_loop, daemon=True, name='telemetry-bg'
+)
+_bg_telemetry_thread.start()
+print("[INIT] Background telemetry thread started")
 
 # Check if first user setup is needed
 first_user = user_mgr.is_first_user()
@@ -2312,124 +2452,45 @@ def api_telemetry_debug(hostname):
 @app.route('/api/telemetry/devices', methods=['GET', 'POST'])
 @login_required
 def api_telemetry_devices():
-    """Get telemetry from all devices (concurrent collection with timeouts)"""
-    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
-    from functools import partial
-
+    """Collect live telemetry from all devices and update the shared cache."""
     try:
-        from core.telemetry import DeviceTelemetry
-        from connectors.netmiko_connector import NetmikoConnector
-        from connectors.eapi_connector import EAPIConnector
-
-        # Get credentials from POST body (preferred) or fall back to env defaults
         body = request.get_json(silent=True) or {}
         username = body.get('username') or os.environ.get('DEFAULT_DEVICE_USERNAME', 'admin')
         password = body.get('password', os.environ.get('DEFAULT_DEVICE_PASSWORD', ''))
 
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT hostname, ip_address, management_type, gnmi_port FROM devices")
-        devices = cursor.fetchall()
-        conn.close()
+        telemetry_data = _collect_all_telemetry(username, password)
 
-        def collect_device_telemetry(device_info):
-            """Collect telemetry from a single device (with timeout protection)"""
-            hostname, ip, mgmt_type, gnmi_port = device_info
-            device_data = {
-                'hostname': hostname,
-                'ip': ip,
-                'telemetry': {'reachable': False}
-            }
-
-            if mgmt_type == 'ssh':
-                try:
-                    app.logger.info(f"Connecting to {hostname} ({ip}) via SSH")
-                    # 10 second timeout on connector
-                    connector = NetmikoConnector(ip, username, password, timeout=10)
-
-                    if connector.connect():
-                        app.logger.info(f"Connected to {hostname}, collecting telemetry")
-                        device_data['telemetry'] = DeviceTelemetry.collect_from_device(connector)
-                        connector.disconnect()
-                    else:
-                        device_data['telemetry']['error'] = 'Connection failed'
-
-                except Exception as e:
-                    app.logger.error(f"Telemetry error for {hostname}: {e}")
-                    device_data['telemetry']['error'] = str(e)
-
-            elif mgmt_type == 'eapi':
-                try:
-                    app.logger.info(f"Connecting to {hostname} ({ip}) via eAPI")
-                    # 10 second timeout on connector
-                    connector = EAPIConnector(ip, username, password, timeout=10)
-
-                    if connector.connect():
-                        app.logger.info(f"Connected to {hostname}, collecting telemetry")
-                        device_data['telemetry'] = DeviceTelemetry.collect_from_device(connector)
-                    else:
-                        device_data['telemetry']['error'] = 'Connection failed'
-
-                except Exception as e:
-                    app.logger.error(f"Telemetry error for {hostname}: {e}")
-                    device_data['telemetry']['error'] = str(e)
-
-            elif mgmt_type == 'gnmi':
-                try:
-                    from connectors.gnmi_connector import GNMIConnector
-                    port = int(gnmi_port) if gnmi_port else 6030
-                    app.logger.info(f"Connecting to {hostname} ({ip}:{port}) via gNMI")
-                    connector = GNMIConnector(ip, port=port, username=username, password=password, timeout=10)
-                    # collect_from_gnmi handles connect/disconnect internally
-                    device_data['telemetry'] = DeviceTelemetry.collect_from_gnmi(connector)
-
-                except Exception as e:
-                    app.logger.error(f"gNMI telemetry error for {hostname}: {e}")
-                    device_data['telemetry']['error'] = str(e)
-
-            return device_data
-
-        # Collect telemetry from all devices concurrently
-        telemetry_data = []
-        executor = ThreadPoolExecutor(max_workers=10)
-        try:
-            futures = {executor.submit(collect_device_telemetry, device): device for device in devices}
-
-            # as_completed() yields each future the moment it finishes — a slow/down
-            # device no longer blocks results from devices that already responded.
-            # Overall ceiling is 35 s; any future still pending after that is marked DOWN.
-            try:
-                for future in as_completed(futures, timeout=35):
-                    try:
-                        telemetry_data.append(future.result())
-                    except Exception as e:
-                        device = futures[future]
-                        app.logger.error(f"Telemetry error for {device[0]}: {e}")
-                        telemetry_data.append({
-                            'hostname': device[0],
-                            'ip': device[1],
-                            'telemetry': {'reachable': False, 'error': str(e)}
-                        })
-            except FuturesTimeoutError:
-                # Any futures that didn't finish within 35 s are marked as timed-out
-                for future, device in futures.items():
-                    if not future.done():
-                        app.logger.warning(f"Telemetry timeout for {device[0]}")
-                        telemetry_data.append({
-                            'hostname': device[0],
-                            'ip': device[1],
-                            'telemetry': {'reachable': False, 'error': 'Collection timeout'}
-                        })
-        finally:
-            # Do not wait for stuck gNMI/gRPC threads — they block indefinitely and
-            # will cause gunicorn to SIGKILL the worker.  Abandon any still-running
-            # threads and let them die in the background.
-            executor.shutdown(wait=False, cancel_futures=True)
+        # Keep the shared cache warm so other pages / returning users see fresh data
+        if telemetry_data:
+            _write_telemetry_cache(telemetry_data)
 
         return jsonify({'success': True, 'devices': telemetry_data})
 
     except Exception as e:
         app.logger.error(f"Telemetry API error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/telemetry/cached')
+@login_required
+def api_telemetry_cached():
+    """Return the last background-collected telemetry instantly (no device connections)."""
+    import json as _json
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT devices_json, updated_at FROM telemetry_cache WHERE id=1")
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            return jsonify({'success': True, 'devices': [], 'age': None, 'from_cache': True})
+
+        devices = _json.loads(row[0])
+        age = int(time.time() - row[1])
+        return jsonify({'success': True, 'devices': devices, 'age': age, 'from_cache': True})
+
+    except Exception as e:
+        app.logger.error(f"Telemetry cache read error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/devices/status')
