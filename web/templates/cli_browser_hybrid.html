@@ -1,0 +1,418 @@
+{% extends "base.html" %}
+
+{% block title %}CLI Browser - Hybrid Navigation{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --primary-color: #461660;
+        --secondary-color: #eeb211;
+    }
+
+    .tech-tab {
+        border-bottom: 3px solid transparent;
+        transition: all 0.2s;
+    }
+
+    .tech-tab.active {
+        border-bottom-color: var(--primary-color);
+        font-weight: bold;
+    }
+
+    .command-template {
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .command-template:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        transform: translateY(-2px);
+    }
+
+    .command-syntax {
+        font-family: 'Courier New', monospace;
+        background: #f8f9fa;
+        padding: 8px;
+        border-radius: 4px;
+        font-size: 14px;
+    }
+
+    .progressive-builder {
+        position: sticky;
+        top: 20px;
+        background: white;
+        border: 2px solid #dee2e6;
+        border-radius: 8px;
+        padding: 20px;
+        min-height: 400px;
+    }
+
+    .built-command-display {
+        background: rgba(70, 22, 96, 0.05);
+        padding: 15px;
+        border-radius: 6px;
+        font-family: 'Courier New', monospace;
+        font-size: 16px;
+        min-height: 60px;
+        margin-bottom: 20px;
+    }
+
+    .token-option {
+        font-family: 'Courier New', monospace;
+    }
+
+    #command-list {
+        max-height: 70vh;
+        overflow-y: auto;
+    }
+
+    .action-filter.active {
+        font-weight: bold;
+        box-shadow: 0 0 0 2px currentColor;
+    }
+
+    .welcome-graphic {
+        opacity: 0.6;
+        text-align: center;
+        padding: 40px;
+    }
+
+    .welcome-graphic i {
+        font-size: 4rem;
+        color: var(--primary-color);
+    }
+
+    /* Simpler command highlighting */
+    .border-success {
+        border-left: 4px solid #28a745 !important;
+    }
+
+    .bg-success-subtle {
+        background-color: #d4edda !important;
+    }
+
+    /* Better token buttons */
+    .token-option {
+        font-family: 'Courier New', monospace;
+        font-size: 14px;
+        font-weight: 500;
+    }
+
+    .token-skip {
+        font-family: inherit;
+    }
+
+    /* Focus on the built command */
+    .built-command-display {
+        font-weight: bold;
+        border-left: 4px solid var(--primary-color);
+    }
+
+    /* Command icons */
+    .command-template:hover {
+        border-left-width: 4px;
+    }
+
+    /* Make variable inputs stand out */
+    .variable-input {
+        border: 2px solid var(--primary-color);
+        font-family: 'Courier New', monospace;
+    }
+
+    .variable-input:focus {
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 0.25rem rgba(70, 22, 96, 0.25);
+    }
+
+    /* Semantic search styles */
+    #semantic-search-input {
+        border: 2px solid #dee2e6;
+        transition: all 0.2s;
+    }
+
+    #semantic-search-input:focus {
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 0.25rem rgba(70, 22, 96, 0.1);
+    }
+
+    #semantic-search-results .command-syntax {
+        background: #f8f9fa;
+        padding: 6px 10px;
+        border-radius: 4px;
+        font-size: 13px;
+    }
+
+    #semantic-search-results .list-group-item:hover {
+        background-color: #f8f9fa;
+    }
+
+    #semantic-search-results .border-success {
+        border-left-width: 4px !important;
+    }
+
+    /* Highlight matched keywords */
+    .keyword-highlight {
+        background-color: rgba(238, 178, 17, 0.3);
+        font-weight: bold;
+        padding: 0 2px;
+        border-radius: 2px;
+    }
+
+    /* Dark Mode Overrides */
+    [data-bs-theme="dark"] .command-syntax {
+        background: #0d1117 !important;
+        color: #e6edf3 !important;
+        border: 1px solid #30363d;
+    }
+
+    [data-bs-theme="dark"] .progressive-builder {
+        background: #161b22 !important;
+        border-color: #30363d !important;
+        color: #e6edf3 !important;
+    }
+
+    [data-bs-theme="dark"] .built-command-display {
+        background: rgba(139, 90, 168, 0.15) !important;
+        color: #e6edf3 !important;
+    }
+
+    [data-bs-theme="dark"] .bg-success-subtle {
+        background-color: #0f2e1a !important;
+        color: #7ee787 !important;
+    }
+
+    [data-bs-theme="dark"] #semantic-search-results .command-syntax {
+        background: #0d1117 !important;
+        color: #e6edf3 !important;
+    }
+
+    [data-bs-theme="dark"] #semantic-search-results .list-group-item:hover {
+        background-color: #1c2128 !important;
+    }
+
+    [data-bs-theme="dark"] .keyword-highlight {
+        background-color: rgba(255, 201, 51, 0.25) !important;
+        color: #ffc933 !important;
+    }
+
+    [data-bs-theme="dark"] .command-template:hover {
+        box-shadow: 0 4px 12px rgba(255,255,255,0.1) !important;
+    }
+
+    [data-bs-theme="dark"] .variable-input {
+        background-color: #0d1117 !important;
+        border-color: #8b5aa8 !important;
+        color: #e6edf3 !important;
+    }
+
+    [data-bs-theme="dark"] .variable-input:focus {
+        background-color: #161b22 !important;
+        border-color: #8b5aa8 !important;
+        color: #e6edf3 !important;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <h2 class="mb-1 help-title" data-help-key="cli_browser" onclick="toggleHelpPanel('cli_browser')">
+                        <i class="bi bi-terminal"></i> CLI Browser
+                        <span class="badge bg-primary">Hybrid Navigation</span>
+                        <i class="bi bi-chevron-down ms-2 help-chev" id="help-chev-cli_browser"></i>
+                    </h2>
+                    <div id="help-body-cli_browser" class="help-body-inline mt-2 mb-2">
+                        <div class="row g-3">
+                            <div class="col-md-5">
+                                <p class="text-muted">The <strong>CLI Browser</strong> is an interactive reference for the full Arista EOS command set — over 20,000 documented commands covering every feature area. Use it to look up syntax, understand available options, and build commands step by step before running them on a live device.</p>
+                                <p class="text-muted">Commands are organised by <strong>technology</strong> (BGP, OSPF, VLANs, etc.) and by <strong>action</strong> (show, configure, clear, debug) so you can narrow down to exactly what you need without knowing the full command upfront.</p>
+                            </div>
+                            <div class="col-md-7">
+                                <div class="row g-2">
+                                    <div class="col-6">
+                                        <div class="help-tip"><i class="bi bi-search text-primary"></i><span><strong>Semantic search</strong> — type a concept (e.g. <em>"bgp neighbor"</em> or <em>"interface errors"</em>) and the browser returns the most relevant commands ranked by relevance.</span></div>
+                                        <div class="help-tip"><i class="bi bi-tags text-info"></i><span><strong>Technology tabs</strong> — jump directly to BGP, OSPF, Interfaces, VLANs, ACLs, QoS, and more without typing anything.</span></div>
+                                        <div class="help-tip"><i class="bi bi-funnel text-secondary"></i><span><strong>Action filter</strong> — narrow results to Show, Configure, Remove, Clear, or Debug commands depending on what you're trying to do.</span></div>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="help-tip"><i class="bi bi-hammer text-warning"></i><span><strong>Progressive builder</strong> — click a command template to open the step-by-step builder. It guides you through required keywords and parameters one token at a time.</span></div>
+                                        <div class="help-tip"><i class="bi bi-clipboard text-success"></i><span><strong>Copy to clipboard</strong> — once the command is complete, copy it with one click and paste it directly into the CLI tab on any Device Detail page.</span></div>
+                                        <div class="help-tip"><i class="bi bi-star text-secondary"></i><span><strong>Ready to use</strong> badges mark commands that have no required parameters — you can run them as-is.</span></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <span class="badge bg-info">{{ stats.total_commands | default(24026) | number_format }} commands</span>
+                    <span class="badge bg-success">{{ stats.total_modes | default(712) | number_format }} modes</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Global Semantic Search -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-primary">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-search text-primary me-3" style="font-size: 1.5rem;"></i>
+                        <div class="flex-grow-1">
+                            <input type="text"
+                                   id="semantic-search-input"
+                                   class="form-control form-control-lg"
+                                   placeholder="Search all commands... (e.g., 'bgp neighbor', 'vlan configuration', 'show interface status')"
+                                   autocomplete="off">
+                            <div id="semantic-search-results" class="mt-2" style="display: none;">
+                                <!-- Results populated by JavaScript -->
+                            </div>
+                        </div>
+                        <button id="clear-search" class="btn btn-outline-secondary ms-2" style="display: none;">
+                            <i class="bi bi-x-lg"></i> Clear
+                        </button>
+                    </div>
+                    <small class="text-muted mt-2 d-block">
+                        <i class="bi bi-lightbulb"></i>
+                        <strong>Tip:</strong> Use the global search to find any command across all technologies and categories.
+                        Then browse by technology for related commands.
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Technology Tabs -->
+    <div class="row mb-3">
+        <div class="col-12">
+            <div id="technology-tabs">
+                <!-- Dynamically populated by JavaScript -->
+                <div class="text-center p-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading technologies...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Action Filters -->
+    <div class="row mb-3">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <strong class="me-3">
+                            <i class="bi bi-funnel"></i> Filter by Action:
+                        </strong>
+                        <div id="action-filters">
+                            <!-- Dynamically populated by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content: Command List + Progressive Builder -->
+    <div class="row">
+        <!-- Left Panel: Command Templates -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <strong><i class="bi bi-list-ul"></i> Command Templates</strong>
+                </div>
+                <div class="card-body">
+                    <div id="command-list">
+                        <!-- Dynamically populated by JavaScript -->
+                        <div class="text-center p-4">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading commands...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Panel: Progressive Builder -->
+        <div class="col-md-6">
+            <!-- Welcome Message (shown initially) -->
+            <div id="welcome-message" class="progressive-builder">
+                <div class="welcome-graphic">
+                    <i class="bi bi-arrow-left-circle"></i>
+                    <h5 class="mt-3">Select a command to start building</h5>
+                    <p class="text-muted">
+                        Click any command from the list to begin the progressive builder experience.
+                        You'll be guided step-by-step through building your command.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Progressive Builder (shown when building) -->
+            <div id="progressive-builder" class="progressive-builder" style="display: none;">
+                <h5>
+                    <i class="bi bi-wrench"></i> Command Builder
+                    <button id="reset-builder" class="btn btn-sm btn-outline-secondary float-end">
+                        <i class="bi bi-arrow-counterclockwise"></i> Reset
+                    </button>
+                </h5>
+
+                <hr>
+
+                <!-- Built Command Display -->
+                <div class="mb-3">
+                    <label class="form-label"><strong>Built Command:</strong></label>
+                    <div class="built-command-display">
+                        <code id="built-command">(building...)</code>
+                    </div>
+                </div>
+
+                <!-- Token Selection Area -->
+                <div id="builder-tokens">
+                    <!-- Dynamically populated by JavaScript -->
+                </div>
+
+                <!-- Command Actions (shown when complete) -->
+                <div id="command-actions" style="display: none;">
+                    <hr>
+                    <div class="d-grid gap-2">
+                        <button id="insert-command" class="btn btn-success">
+                            <i class="bi bi-plus-circle"></i> Insert to Configlet
+                        </button>
+                        <button id="copy-command" class="btn btn-outline-primary">
+                            <i class="bi bi-clipboard"></i> Copy to Clipboard
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tips Section -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card bg-light">
+                <div class="card-body">
+                    <h6><i class="bi bi-lightbulb"></i> Tips for Using Hybrid Navigation</h6>
+                    <ul class="mb-0">
+                        <li><strong>Browse by Technology:</strong> Click technology tabs to see all related commands grouped together</li>
+                        <li><strong>Filter by Action:</strong> Narrow down to Show, Configure, or other command types</li>
+                        <li><strong>Progressive Building:</strong> Click commands with parameters to use the step-by-step builder</li>
+                        <li><strong>Quick Insert:</strong> Commands without parameters can be inserted directly</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/hybrid_navigation.js') }}"></script>
+{% endblock %}

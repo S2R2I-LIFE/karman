@@ -1,0 +1,15 @@
+!
+! Spanning Tree Configuration
+!
+{% if spanning_tree %}
+spanning-tree mode {{ spanning_tree.mode | default('mstp') }}
+{% if spanning_tree.priority %}
+spanning-tree priority {{ spanning_tree.priority }}
+{% endif %}
+{% if spanning_tree.vlan_priorities %}
+{% for vlan, priority in spanning_tree.vlan_priorities.items() %}
+spanning-tree vlan {{ vlan }} priority {{ priority }}
+{% endfor %}
+{% endif %}
+!
+{% endif %}

@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["hostname"],
+  "properties": {
+    "hostname": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9-]+$"
+    },
+    "domain_name": {
+      "type": "string"
+    },
+    "mlag": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "domain_id": {"type": "string"},
+        "peer_vlan": {"type": "integer", "minimum": 1, "maximum": 4094},
+        "local_ip": {"type": "string"},
+        "peer_ip": {"type": "string"}
+      }
+    },
+    "bgp": {
+      "type": "object",
+      "required": ["asn", "router_id"],
+      "properties": {
+        "asn": {"type": "integer", "minimum": 1, "maximum": 4294967295},
+        "router_id": {"type": "string"}
+      }
+    },
+    "vlans": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": {"type": "integer", "minimum": 1, "maximum": 4094},
+          "name": {"type": "string"}
+        }
+      }
+    }
+  }
+}

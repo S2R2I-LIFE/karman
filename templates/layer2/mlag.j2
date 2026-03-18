@@ -1,0 +1,34 @@
+!
+! MLAG Configuration
+!
+{% if mlag.enabled %}
+vlan {{ mlag.peer_vlan }}
+   name MLAG-PEER
+   trunk group MLAG-PEER
+!
+interface Port-Channel{{ mlag.peer_link_po }}
+   description MLAG Peer Link
+   switchport mode trunk
+   switchport trunk group MLAG-PEER
+!
+{% for interface in mlag.peer_link_interfaces %}
+interface {{ interface }}
+   description MLAG Peer Link Member
+   channel-group {{ mlag.peer_link_po }} mode active
+!
+{% endfor %}
+interface Vlan{{ mlag.peer_vlan }}
+   description MLAG Peer L3 Interface
+   ip address {{ mlag.local_ip }}/{{ mlag.peer_subnet_mask }}
+!
+mlag configuration
+   domain-id {{ mlag.domain_id }}
+   local-interface Vlan{{ mlag.peer_vlan }}
+   peer-address {{ mlag.peer_ip }}
+   peer-link Port-Channel{{ mlag.peer_link_po }}
+   {% if mlag.reload_delay %}
+   reload-delay mlag {{ mlag.reload_delay.mlag }}
+   reload-delay non-mlag {{ mlag.reload_delay.non_mlag }}
+   {% endif %}
+!
+{% endif %}

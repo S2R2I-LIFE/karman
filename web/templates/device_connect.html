@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}Connect to {{ device.hostname }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row mb-3">
+        <div class="col">
+            <h2><i class="bi bi-terminal"></i> Connect to {{ device.hostname }}</h2>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Connection Information</h5>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <h6><i class="bi bi-info-circle"></i> Connection Details</h6>
+                        <dl class="row mb-0">
+                            <dt class="col-sm-2">Hostname:</dt>
+                            <dd class="col-sm-4"><code>{{ connection_info.hostname }}</code></dd>
+
+                            <dt class="col-sm-2">IP Address:</dt>
+                            <dd class="col-sm-4"><code>{{ connection_info.ip_address }}</code></dd>
+
+                            <dt class="col-sm-2">Username:</dt>
+                            <dd class="col-sm-4"><code>{{ connection_info.username }}</code></dd>
+
+                            <dt class="col-sm-2">Management:</dt>
+                            <dd class="col-sm-4"><code>{{ connection_info.management_type }}</code></dd>
+                        </dl>
+                    </div>
+
+                    <h6 class="mt-4">Connection Methods:</h6>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-primary text-white">
+                                    <h6 class="mb-0"><i class="bi bi-terminal"></i> SSH Connection</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p>Use your preferred SSH client to connect:</p>
+                                    <div class="bg-dark text-light p-3 rounded mb-3">
+                                        <code>ssh {{ connection_info.username }}@{{ connection_info.ip_address }}</code>
+                                    </div>
+                                    <p class="mb-0"><small class="text-muted">You can use Terminal, PuTTY, or any SSH client</small></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-success text-white">
+                                    <h6 class="mb-0"><i class="bi bi-code-slash"></i> eAPI Connection</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p>Connect using eAPI (HTTPS):</p>
+                                    <div class="bg-dark text-light p-3 rounded mb-3">
+                                        <code>https://{{ connection_info.ip_address }}/command-api</code>
+                                    </div>
+                                    <a href="https://{{ connection_info.ip_address }}" target="_blank" class="btn btn-sm btn-success">
+                                        <i class="bi bi-box-arrow-up-right"></i> Open eAPI Explorer
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-warning mt-4">
+                        <h6><i class="bi bi-exclamation-triangle"></i> Note</h6>
+                        <p class="mb-0">Interactive terminal sessions are not yet implemented in the web UI. Please use external SSH/eAPI clients for now. Future versions will include a web-based terminal.</p>
+                    </div>
+
+                    <div class="mt-4">
+                        <a href="{{ url_for('device_detail', hostname=device.hostname) }}" class="btn btn-secondary">
+                            <i class="bi bi-arrow-left"></i> Back to Device Details
+                        </a>
+                        <button onclick="copySSHCommand()" class="btn btn-primary">
+                            <i class="bi bi-clipboard"></i> Copy SSH Command
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Use credentials from localStorage if available
+const storedUsername = localStorage.getItem('deviceUsername');
+if (storedUsername) {
+    // Update displayed username
+    document.querySelectorAll('code').forEach(code => {
+        code.textContent = code.textContent.replace('{{ connection_info.username }}', storedUsername);
+    });
+}
+
+function copySSHCommand() {
+    const username = localStorage.getItem('deviceUsername') || '{{ connection_info.username }}';
+    const command = `ssh ${username}@{{ connection_info.ip_address }}`;
+    navigator.clipboard.writeText(command).then(() => {
+        alert('SSH command copied to clipboard!');
+    }).catch(err => {
+        alert('Failed to copy: ' + err);
+    });
+}
+</script>
+{% endblock %}

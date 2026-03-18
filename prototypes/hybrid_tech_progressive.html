@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hybrid: Technology + Progressive Disclosure</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <style>
+        :root {
+            --tech-color: #049fd9;
+            --token-keyword: #0066cc;
+            --token-variable: #cc6600;
+            --token-optional: #999;
+        }
+
+        .tech-section {
+            border-left: 4px solid var(--tech-color);
+            margin-bottom: 30px;
+        }
+
+        .command-template {
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 12px;
+            margin: 8px 0;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .command-template:hover {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border-color: var(--tech-color);
+        }
+
+        .command-template.expanded {
+            background: #f8f9fa;
+            border-color: var(--tech-color);
+            border-width: 2px;
+        }
+
+        .command-builder {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+
+        .token-chip {
+            display: inline-block;
+            padding: 6px 12px;
+            margin: 4px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 13px;
+            border: 2px solid transparent;
+        }
+
+        .token-chip:hover {
+            transform: scale(1.05);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+
+        .token-chip.selected {
+            border-color: var(--tech-color);
+            font-weight: bold;
+        }
+
+        .token-keyword { background: #e3f2fd; color: #1565c0; }
+        .token-variable { background: #fff3e0; color: #e65100; }
+        .token-optional { background: #f5f5f5; color: #666; }
+
+        .built-command {
+            background: #263238;
+            color: #aed581;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            margin: 10px 0;
+            font-size: 16px;
+        }
+
+        .progress-step {
+            display: inline-block;
+            padding: 4px 12px;
+            margin: 2px;
+            background: var(--tech-color);
+            color: white;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .next-tokens-area {
+            background: #f8f9fa;
+            border: 2px dashed #dee2e6;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+
+        .command-complete {
+            background: #d4edda;
+            border: 2px solid #28a745;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 10px 0;
+        }
+
+        .tech-tab {
+            padding: 12px 24px;
+            border-bottom: 3px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .tech-tab:hover {
+            background: #f8f9fa;
+        }
+
+        .tech-tab.active {
+            border-bottom-color: var(--tech-color);
+            font-weight: bold;
+        }
+
+        .token-info {
+            font-size: 11px;
+            color: #666;
+            font-style: italic;
+        }
+
+        .autocomplete-hint {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 10px;
+            margin: 10px 0;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-primary">
+        <div class="container-fluid">
+            <span class="navbar-brand">
+                <i class="bi bi-terminal"></i> CLI Browser - Hybrid Navigation Prototype
+            </span>
+            <span class="badge bg-success">RECOMMENDED APPROACH</span>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Explanation -->
+        <div class="alert alert-info">
+            <strong><i class="bi bi-lightbulb"></i> Best of Both Worlds:</strong>
+            Technology-based organization + Progressive disclosure (tab-complete experience)
+        </div>
+
+        <!-- Technology Tabs -->
+        <ul class="nav nav-tabs mb-4">
+            <li class="nav-item">
+                <a class="nav-link tech-tab active" data-tech="bgp">
+                    <i class="bi bi-globe"></i> BGP <span class="badge bg-secondary">3,036</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link tech-tab" data-tech="interface">
+                    <i class="bi bi-ethernet"></i> Interfaces <span class="badge bg-secondary">2,606</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link tech-tab" data-tech="ospf">
+                    <i class="bi bi-diagram-3"></i> OSPF <span class="badge bg-secondary">848</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link tech-tab" data-tech="vlan">
+                    <i class="bi bi-tag"></i> VLANs <span class="badge bg-secondary">136</span>
+                </a>
+            </li>
+        </ul>
+
+        <!-- Action Filter -->
+        <div class="mb-3">
+            <strong>Filter by Action:</strong>
+            <button class="btn btn-sm btn-outline-primary active">All</button>
+            <button class="btn btn-sm btn-outline-info">Show</button>
+            <button class="btn btn-sm btn-outline-success">Configure</button>
+            <button class="btn btn-sm btn-outline-warning">Troubleshoot</button>
+        </div>
+
+        <!-- BGP Technology Section -->
+        <div class="tech-section card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-globe"></i> BGP Commands - Click to Build</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <!-- Left Column: Command Templates -->
+                    <div class="col-md-6">
+                        <h6>Common BGP Commands</h6>
+                        <p class="text-muted small">Click any command to build it step-by-step</p>
+
+                        <!-- Command Template 1 -->
+                        <div class="command-template" onclick="startBuildingCommand('show-bgp-summary')">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <strong>show bgp summary</strong>
+                                    <br><small class="text-muted">View BGP neighbor summary</small>
+                                </div>
+                                <span class="badge bg-primary">Show</span>
+                            </div>
+                        </div>
+
+                        <!-- Command Template 2 -->
+                        <div class="command-template" onclick="startBuildingCommand('show-bgp-neighbors')">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <strong>show bgp neighbors</strong>
+                                    <br><small class="text-muted">Detailed neighbor information</small>
+                                </div>
+                                <span class="badge bg-primary">Show</span>
+                            </div>
+                        </div>
+
+                        <!-- Command Template 3 (Complex) -->
+                        <div class="command-template" id="cmd-neighbor" onclick="startBuildingCommand('neighbor')">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <strong>neighbor ... remote-as</strong>
+                                    <br><small class="text-muted">Configure BGP neighbor - requires parameters</small>
+                                </div>
+                                <span class="badge bg-success">Configure</span>
+                            </div>
+                        </div>
+
+                        <!-- Command Template 4 -->
+                        <div class="command-template" onclick="startBuildingCommand('router-bgp')">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <strong>router bgp</strong>
+                                    <br><small class="text-muted">Enter BGP configuration mode</small>
+                                </div>
+                                <span class="badge bg-success">Configure</span>
+                            </div>
+                        </div>
+
+                        <!-- Command Template 5 -->
+                        <div class="command-template" onclick="startBuildingCommand('address-family')">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <strong>address-family</strong>
+                                    <br><small class="text-muted">Configure address family - multiple options</small>
+                                </div>
+                                <span class="badge bg-success">Configure</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Progressive Builder -->
+                    <div class="col-md-6">
+                        <div id="builder-area" style="display: none;">
+                            <h6>Command Builder <button class="btn btn-sm btn-outline-secondary float-end" onclick="resetBuilder()">Reset</button></h6>
+
+                            <div class="autocomplete-hint">
+                                <i class="bi bi-info-circle"></i> <strong>Like Tab-Complete:</strong> Select tokens to build your command step-by-step
+                            </div>
+
+                            <!-- Current Command Display -->
+                            <div class="built-command" id="built-command">
+                                <span class="text-muted">Building command...</span>
+                            </div>
+
+                            <!-- Progress Steps -->
+                            <div id="progress-steps" class="mb-3"></div>
+
+                            <!-- Next Token Options -->
+                            <div id="next-tokens" class="next-tokens-area">
+                                <strong>Next token options:</strong>
+                                <div id="token-options" class="mt-2">
+                                    <!-- Tokens will be inserted here -->
+                                </div>
+                            </div>
+
+                            <!-- Completion Status -->
+                            <div id="completion-status" style="display: none;">
+                                <!-- Completion message -->
+                            </div>
+
+                            <!-- Actions -->
+                            <div class="mt-3">
+                                <button class="btn btn-primary" id="insert-btn" disabled>
+                                    <i class="bi bi-plus-circle"></i> Insert to Configlet
+                                </button>
+                                <button class="btn btn-outline-secondary" onclick="copyCommand()">
+                                    <i class="bi bi-clipboard"></i> Copy
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Initial State -->
+                        <div id="builder-placeholder">
+                            <div class="text-center text-muted p-5">
+                                <i class="bi bi-arrow-left" style="font-size: 3rem;"></i>
+                                <p class="mt-3">Click a command on the left to start building</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Example: Completed Command -->
+        <div class="card mt-4">
+            <div class="card-header bg-success text-white">
+                <h6 class="mb-0"><i class="bi bi-check-circle"></i> Example: Built Command</h6>
+            </div>
+            <div class="card-body">
+                <p><strong>Technology:</strong> BGP → <strong>Command:</strong> neighbor configuration</p>
+                <div class="built-command">
+                    neighbor 10.1.1.1 remote-as 65001
+                </div>
+                <p class="mb-0"><small class="text-muted">Built progressively: neighbor → [IP] → remote-as → [ASN]</small></p>
+            </div>
+        </div>
+
+        <!-- How It Works -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-gear"></i> How This Works</h6>
+            </div>
+            <div class="card-body">
+                <h6>1. Technology-Based Browsing</h6>
+                <ul>
+                    <li>Commands organized by network technology (BGP, OSPF, Interfaces)</li>
+                    <li>All related commands grouped together</li>
+                    <li>No need to know CLI modes</li>
+                </ul>
+
+                <h6>2. Progressive Disclosure (Tab-Complete)</h6>
+                <ul>
+                    <li>Click a command template to start building</li>
+                    <li>System shows next valid tokens (like tab-complete)</li>
+                    <li>Select token → see next options → repeat</li>
+                    <li>Build complex commands step-by-step with validation</li>
+                </ul>
+
+                <h6>3. Intelligent Assistance</h6>
+                <ul>
+                    <li>Required vs optional tokens clearly marked</li>
+                    <li>Keywords (blue), Variables (orange), Optional (gray)</li>
+                    <li>Hover for parameter explanations</li>
+                    <li>Real-time syntax validation</li>
+                </ul>
+
+                <h6>4. Contextual Help</h6>
+                <ul>
+                    <li>Each token shows description</li>
+                    <li>Links to related commands</li>
+                    <li>Example values provided</li>
+                    <li>Troubleshooting workflows accessible</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentTokens = [];
+        let currentCommand = '';
+
+        // Simulated command structures
+        const commands = {
+            'neighbor': {
+                tokens: [
+                    { type: 'keyword', value: 'neighbor', required: true },
+                    { type: 'variable', value: '<IP_ADDRESS>', required: true, hint: 'Enter neighbor IP (e.g., 10.1.1.1)' },
+                    { type: 'keyword', value: 'remote-as', required: true },
+                    { type: 'variable', value: '<ASN>', required: true, hint: 'Enter AS number (e.g., 65001)' }
+                ]
+            },
+            'address-family': {
+                tokens: [
+                    { type: 'optional', value: '[no|default]', required: false },
+                    { type: 'keyword', value: 'address-family', required: true },
+                    { type: 'choice', value: 'ipv4|ipv6|evpn|vpnv4', required: true, hint: 'Select address family type' }
+                ]
+            },
+            'router-bgp': {
+                tokens: [
+                    { type: 'keyword', value: 'router', required: true },
+                    { type: 'keyword', value: 'bgp', required: true },
+                    { type: 'variable', value: '<ASN>', required: true, hint: 'Your AS number (e.g., 65000)' }
+                ]
+            }
+        };
+
+        function startBuildingCommand(cmdType) {
+            document.getElementById('builder-placeholder').style.display = 'none';
+            document.getElementById('builder-area').style.display = 'block';
+
+            currentCommand = cmdType;
+            currentTokens = [];
+
+            // Highlight selected command
+            document.querySelectorAll('.command-template').forEach(el => {
+                el.classList.remove('expanded');
+            });
+            document.getElementById('cmd-' + cmdType)?.classList.add('expanded');
+
+            updateBuilder();
+        }
+
+        function updateBuilder() {
+            const cmd = commands[currentCommand];
+            if (!cmd) return;
+
+            // Update built command
+            let builtCmd = currentTokens.join(' ');
+            document.getElementById('built-command').innerHTML =
+                builtCmd || '<span class="text-muted">Building command...</span>';
+
+            // Update progress steps
+            let stepsHtml = '';
+            currentTokens.forEach((token, idx) => {
+                stepsHtml += `<span class="progress-step">Step ${idx + 1}: ${token}</span>`;
+            });
+            document.getElementById('progress-steps').innerHTML = stepsHtml;
+
+            // Show next token options
+            const nextTokenIdx = currentTokens.length;
+            if (nextTokenIdx < cmd.tokens.length) {
+                const nextToken = cmd.tokens[nextTokenIdx];
+                showNextTokenOptions(nextToken);
+                document.getElementById('next-tokens').style.display = 'block';
+                document.getElementById('completion-status').style.display = 'none';
+            } else {
+                // Command complete
+                document.getElementById('next-tokens').style.display = 'none';
+                document.getElementById('completion-status').style.display = 'block';
+                document.getElementById('completion-status').innerHTML = `
+                    <div class="command-complete">
+                        <i class="bi bi-check-circle"></i> <strong>Command Complete!</strong>
+                        <div class="mt-2">${currentTokens.join(' ')}</div>
+                    </div>
+                `;
+                document.getElementById('insert-btn').disabled = false;
+            }
+        }
+
+        function showNextTokenOptions(tokenDef) {
+            let html = `<p class="token-info">${tokenDef.hint || 'Select next token'}</p>`;
+
+            if (tokenDef.type === 'keyword') {
+                html += `<span class="token-chip token-keyword" onclick="selectToken('${tokenDef.value}')">${tokenDef.value}</span>`;
+            } else if (tokenDef.type === 'variable') {
+                html += `
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="var-input" placeholder="${tokenDef.value}">
+                        <button class="btn btn-primary" onclick="selectVariableToken()">Add</button>
+                    </div>
+                `;
+            } else if (tokenDef.type === 'choice') {
+                const choices = tokenDef.value.split('|');
+                choices.forEach(choice => {
+                    html += `<span class="token-chip token-keyword" onclick="selectToken('${choice}')">${choice}</span>`;
+                });
+            } else if (tokenDef.type === 'optional') {
+                html += `<span class="token-chip token-optional" onclick="selectToken('no')">no</span>`;
+                html += `<span class="token-chip token-optional" onclick="selectToken('default')">default</span>`;
+                html += `<span class="token-chip token-optional" onclick="skipToken()">Skip (optional)</span>`;
+            }
+
+            document.getElementById('token-options').innerHTML = html;
+        }
+
+        function selectToken(value) {
+            currentTokens.push(value);
+            updateBuilder();
+        }
+
+        function selectVariableToken() {
+            const input = document.getElementById('var-input');
+            if (input && input.value) {
+                currentTokens.push(input.value);
+                updateBuilder();
+            }
+        }
+
+        function skipToken() {
+            // Skip optional token, move to next
+            updateBuilder();
+        }
+
+        function resetBuilder() {
+            currentTokens = [];
+            updateBuilder();
+        }
+
+        function copyCommand() {
+            const cmd = currentTokens.join(' ');
+            navigator.clipboard.writeText(cmd);
+            alert('Command copied to clipboard!');
+        }
+    </script>
+</body>
+</html>

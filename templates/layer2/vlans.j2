@@ -1,0 +1,16 @@
+!
+! VLAN Configuration
+!
+{% for vlan in vlans %}
+vlan {{ vlan.id }}
+   name {{ vlan.name }}
+   {% if vlan.trunk_group %}
+   trunk group {{ vlan.trunk_group }}
+   {% endif %}
+   {% if vlan.state is defined and vlan.state == 'suspend' %}
+   state suspend
+   {% else %}
+   state active
+   {% endif %}
+!
+{% endfor %}

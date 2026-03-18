@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}Create Task - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('tasks') }}">Tasks</a></li>
+                <li class="breadcrumb-item active">Create</li>
+            </ol>
+        </nav>
+
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0"><i class="bi bi-plus-circle"></i> Create New Task</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="mb-3">
+                        <label for="task_type" class="form-label">Task Type *</label>
+                        <select class="form-select" id="task_type" name="task_type" required onchange="toggleConfigletSelection()">
+                            <option value="">Select type...</option>
+                            <option value="config_change">Configuration Change</option>
+                            <option value="configlet_assign">Assign Configlet</option>
+                            <option value="configlet_remove">Remove Configlet</option>
+                            <option value="software_upgrade">Software Upgrade</option>
+                            <option value="compliance_check">Compliance Check</option>
+                        </select>
+                    </div>
+
+                    <!-- Configlet Selection (shown for configlet-related tasks) -->
+                    <div class="mb-3" id="configletSelection" style="display:none;">
+                        <label class="form-label">Select Configlets *</label>
+                        <div class="border rounded p-3" style="max-height: 300px; overflow-y: auto;">
+                            {% for configlet in configlets %}
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="configlets" value="{{ configlet }}" id="cfg_{{ loop.index }}">
+                                <label class="form-check-label" for="cfg_{{ loop.index }}">
+                                    {{ configlet }}
+                                </label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Description *</label>
+                        <textarea class="form-control" id="description" name="description" rows="3" required
+                                  placeholder="Describe what this task will do..."></textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="devices" class="form-label">Target Devices *</label>
+                        <input type="text" class="form-control" id="devices" name="devices" required
+                               placeholder="device1, device2, device3">
+                        <div class="form-text">Comma-separated list of device hostnames</div>
+
+                        <div class="mt-2">
+                            <small class="text-muted">Available devices:</small>
+                            <div class="mt-1">
+                                {% for device in devices %}
+                                <span class="badge bg-secondary me-1 mb-1" style="cursor: pointer;"
+                                      onclick="addDevice('{{ device }}')">{{ device }}</span>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <a href="{{ url_for('tasks') }}" class="btn btn-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-plus-circle"></i> Create Task
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function toggleConfigletSelection() {
+    const taskType = document.getElementById('task_type').value;
+    const configletDiv = document.getElementById('configletSelection');
+
+    if (taskType === 'configlet_assign' || taskType === 'configlet_remove') {
+        configletDiv.style.display = 'block';
+    } else {
+        configletDiv.style.display = 'none';
+    }
+}
+
+function addDevice(deviceName) {
+    const input = document.getElementById('devices');
+    const current = input.value.trim();
+    if (current) {
+        if (!current.split(',').map(d => d.trim()).includes(deviceName)) {
+            input.value = current + ', ' + deviceName;
+        }
+    } else {
+        input.value = deviceName;
+    }
+}
+</script>
+{% endblock %}

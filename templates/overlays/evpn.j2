@@ -1,0 +1,23 @@
+!
+! EVPN Configuration
+!
+{% if evpn %}
+router bgp {{ evpn.asn }}
+   !
+   {% for peer in evpn.peers %}
+   neighbor {{ peer.ip }} remote-as {{ peer.remote_asn }}
+   {% if peer.description %}
+   neighbor {{ peer.ip }} description {{ peer.description }}
+   {% endif %}
+   neighbor {{ peer.ip }} update-source {{ peer.update_source }}
+   neighbor {{ peer.ip }} ebgp-multihop {{ peer.multihop | default(3) }}
+   neighbor {{ peer.ip }} send-community extended
+   {% endfor %}
+   !
+   address-family evpn
+      {% for peer in evpn.peers %}
+      neighbor {{ peer.ip }} activate
+      {% endfor %}
+   !
+!
+{% endif %}

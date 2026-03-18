@@ -1,0 +1,43 @@
+# Git
+.git
+.gitignore
+
+# Documentation archive
+docs/archive
+
+# Development scripts
+scripts/development
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Environments
+.env
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.log
+*.tmp
+*.bak
+
+# Test files
+test_*
+
+# Database backups
+*.db.backup_*
+*.db.old

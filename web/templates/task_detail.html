@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+
+{% block title %}Task #{{ task.task_id }} - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('tasks') }}">Tasks</a></li>
+                <li class="breadcrumb-item active">Task #{{ task.task_id }}</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h4 class="mb-0">
+                    <i class="bi bi-clipboard-check"></i> Task #{{ task.task_id }}
+                    <span class="badge bg-{{ 'success' if task.status == 'completed' else 'warning' if task.status == 'pending' else 'info' if task.status == 'in_progress' else 'danger' }}">
+                        {{ task.status }}
+                    </span>
+                </h4>
+                <div class="btn-group">
+                    {% if task.status == 'pending' %}
+                    <form method="POST" action="{{ url_for('execute_task', task_id=task.task_id) }}" class="d-inline">
+                        <button type="submit" class="btn btn-success btn-sm">
+                            <i class="bi bi-play-fill"></i> Execute
+                        </button>
+                    </form>
+                    <a href="{{ url_for('edit_task', task_id=task.task_id) }}" class="btn btn-primary btn-sm">
+                        <i class="bi bi-pencil"></i> Edit
+                    </a>
+                    <form method="POST" action="{{ url_for('cancel_task', task_id=task.task_id) }}" class="d-inline">
+                        <button type="submit" class="btn btn-warning btn-sm" onclick="return confirm('Cancel this task?')">
+                            <i class="bi bi-x-circle"></i> Cancel
+                        </button>
+                    </form>
+                    {% elif task.status == 'in_progress' %}
+                    <form method="POST" action="{{ url_for('cancel_task', task_id=task.task_id) }}" class="d-inline">
+                        <button type="submit" class="btn btn-warning btn-sm" onclick="return confirm('Cancel running task?')">
+                            <i class="bi bi-x-circle"></i> Cancel
+                        </button>
+                    </form>
+                    {% endif %}
+                    <form method="POST" action="{{ url_for('delete_task', task_id=task.task_id) }}" class="d-inline"
+                          onsubmit="return confirm('Permanently delete Task #{{ task.task_id }} and all its logs? This cannot be undone.')">
+                        <button type="submit" class="btn btn-danger btn-sm">
+                            <i class="bi bi-trash"></i> Delete
+                        </button>
+                    </form>
+                </div>
+            </div>
+            <div class="card-body">
+                <dl class="row">
+                    <dt class="col-sm-3">Type</dt>
+                    <dd class="col-sm-9"><span class="badge bg-secondary">{{ task.task_type }}</span></dd>
+
+                    <dt class="col-sm-3">Description</dt>
+                    <dd class="col-sm-9">{{ task.description }}</dd>
+
+                    <dt class="col-sm-3">Created</dt>
+                    <dd class="col-sm-9">{{ task.created_at|datetime }} by {{ task.created_by }}</dd>
+
+                    {% if task.executed_at %}
+                    <dt class="col-sm-3">Executed</dt>
+                    <dd class="col-sm-9">{{ task.executed_at|datetime }} by {{ task.executed_by }}</dd>
+                    {% endif %}
+
+                    <dt class="col-sm-3">Devices</dt>
+                    <dd class="col-sm-9">
+                        {% for device in task.devices %}
+                        <span class="badge bg-info">{{ device }}</span>
+                        {% endfor %}
+                    </dd>
+                </dl>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-terminal"></i> Execution Logs</h5>
+            </div>
+            <div class="card-body">
+                {% if logs %}
+                <div class="log-container">
+                    {% for log in logs %}
+                    <div class="log-entry mb-2">
+                        <span class="badge bg-{{ 'danger' if log.log_level == 'ERROR' else 'warning' if log.log_level == 'WARNING' else 'info' }}">
+                            {{ log.log_level }}
+                        </span>
+                        <span class="text-muted small">{{ log.timestamp|datetime }}</span>
+                        <span class="badge bg-secondary">{{ log.device }}</span>
+                        <br>
+                        <code>{{ log.message }}</code>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted">No execution logs yet</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-lightning"></i> Actions</h5>
+            </div>
+            <div class="card-body d-grid gap-2">
+                {% if task.status == 'pending' %}
+                <form method="POST" action="{{ url_for('execute_task', task_id=task.task_id) }}">
+                    <button type="submit" class="btn btn-success w-100">
+                        <i class="bi bi-play-circle"></i> Execute Task
+                    </button>
+                </form>
+                <a href="{{ url_for('edit_task', task_id=task.task_id) }}" class="btn btn-primary">
+                    <i class="bi bi-pencil"></i> Edit Task
+                </a>
+                <form method="POST" action="{{ url_for('cancel_task', task_id=task.task_id) }}"
+                      onsubmit="return confirm('Cancel this task?')">
+                    <button type="submit" class="btn btn-warning w-100">
+                        <i class="bi bi-x-circle"></i> Cancel Task
+                    </button>
+                </form>
+                {% elif task.status == 'in_progress' %}
+                <form method="POST" action="{{ url_for('cancel_task', task_id=task.task_id) }}"
+                      onsubmit="return confirm('Cancel running task?')">
+                    <button type="submit" class="btn btn-warning w-100">
+                        <i class="bi bi-x-circle"></i> Cancel Task
+                    </button>
+                </form>
+                {% endif %}
+                <form method="POST" action="{{ url_for('delete_task', task_id=task.task_id) }}"
+                      onsubmit="return confirm('Permanently delete Task #{{ task.task_id }} and all its logs? This cannot be undone.')">
+                    <button type="submit" class="btn btn-danger w-100">
+                        <i class="bi bi-trash"></i> Delete Task
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> Task Info</h5>
+            </div>
+            <div class="card-body">
+                <dl class="mb-0">
+                    <dt>Status</dt>
+                    <dd>{{ task.status }}</dd>
+                    <dt>Device Count</dt>
+                    <dd>{{ task.devices|length }}</dd>
+                    <dt>Age</dt>
+                    <dd>{{ task.created_at|timeago }}</dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

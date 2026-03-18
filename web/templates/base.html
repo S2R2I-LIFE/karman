@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ app_name }}{% endblock %}</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon.png') }}">
+
+    <!-- Prevent flash of white background - Apply theme immediately -->
+    <script>
+        (function() {
+            const theme = localStorage.getItem('theme') || 'auto';
+            if (theme === 'auto') {
+                const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                document.documentElement.setAttribute('data-bs-theme', prefersDark ? 'dark' : 'light');
+            } else {
+                document.documentElement.setAttribute('data-bs-theme', theme);
+            }
+        })();
+    </script>
+
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <!-- Starfield background (dark mode only) -->
+    <canvas id="starfield-bg"></canvas>
+
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container-fluid">
+            <a class="navbar-brand d-flex align-items-center gap-2" href="{{ url_for('dashboard') }}">
+                <img src="{{ url_for('static', filename='img/logo-circle.png') }}"
+                     alt="Kármán logo" height="36" width="36"
+                     style="border-radius:50%; object-fit:cover;">
+                {{ app_name }}
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}"
+                           href="{{ url_for('dashboard') }}">
+                            <i class="bi bi-speedometer2"></i> Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint and 'device' in request.endpoint %}active{% endif %}"
+                           href="{{ url_for('devices') }}">
+                            <i class="bi bi-hdd-network"></i> Devices
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'topology' %}active{% endif %}"
+                           href="{{ url_for('topology') }}">
+                            <i class="bi bi-diagram-3"></i> Topology
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint and 'configlet' in request.endpoint %}active{% endif %}"
+                           href="{{ url_for('configlets') }}">
+                            <i class="bi bi-file-earmark-code"></i> Configlets
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'config_builder' %}active{% endif %}"
+                           href="{{ url_for('config_builder') }}">
+                            <i class="bi bi-tools"></i> Builder
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint and 'task' in request.endpoint %}active{% endif %}"
+                           href="{{ url_for('tasks') }}">
+                            <i class="bi bi-list-check"></i> Tasks
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'cli_browser' %}active{% endif %}"
+                           href="{{ url_for('cli_browser') }}">
+                            <i class="bi bi-terminal"></i> CLI Browser
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'mib_browser' %}active{% endif %}"
+                           href="{{ url_for('mib_browser') }}">
+                            <i class="bi bi-diagram-3"></i> MIB Browser
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/static/docs/index.html" target="_blank">
+                            <i class="bi bi-book"></i> Docs
+                        </a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav">
+                    <!-- Notification Bell -->
+                    <li class="nav-item dropdown me-1">
+                        <a class="nav-link position-relative" href="#" id="notifDropdown"
+                           role="button" data-bs-toggle="dropdown" aria-expanded="false"
+                           title="Notifications">
+                            <i class="bi bi-bell"></i>
+                            <span id="notif-badge"
+                                  class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+                                  style="font-size:0.6rem; display:none;">0</span>
+                        </a>
+                        <div class="dropdown-menu dropdown-menu-end p-0"
+                             id="notif-menu"
+                             style="min-width:320px; max-width:360px;">
+                            <div class="d-flex justify-content-between align-items-center px-3 py-2 border-bottom">
+                                <strong style="font-size:0.9rem;">Notifications</strong>
+                                <button class="btn btn-link btn-sm p-0 text-muted"
+                                        id="notif-mark-all" style="font-size:0.78rem;">
+                                    Mark all read
+                                </button>
+                            </div>
+                            <div id="notif-list"
+                                 style="max-height:360px; overflow-y:auto; font-size:0.85rem;">
+                                <div class="text-muted text-center py-4" id="notif-empty">
+                                    <i class="bi bi-bell-slash"></i> No notifications
+                                </div>
+                            </div>
+                        </div>
+                    </li>
+
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button"
+                           data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> {{ current_user }}
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="{{ url_for('settings') }}"><i class="bi bi-gear"></i> Settings</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <form method="POST" action="{{ url_for('logout') }}" style="margin:0;">
+                                    <button type="submit" class="dropdown-item">
+                                        <i class="bi bi-box-arrow-right"></i> Logout
+                                    </button>
+                                </form>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Flash Messages -->
+    <div class="container mt-3">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+    </div>
+
+    <!-- Main Content -->
+    <main class="container-fluid mt-4">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer mt-auto py-3 bg-light">
+        <div class="container text-center">
+            <span class="text-muted">{{ app_name }} v{{ app_version }} |
+                <a href="/static/docs/index.html" target="_blank">Documentation</a> |
+                <a href="/api/stats" target="_blank">API</a>
+            </span>
+        </div>
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Chart.js for visualizations -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+
+    <!-- Theme change listener -->
+    <script>
+        // Listen for system theme changes when in auto mode
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+            if (localStorage.getItem('theme') === 'auto' || !localStorage.getItem('theme')) {
+                document.documentElement.setAttribute('data-bs-theme', e.matches ? 'dark' : 'light');
+            }
+        });
+    </script>
+
+    <!-- Global: force dark text on all yellow (bg-warning) badges in dark mode.
+         Inline JS beats Bootstrap's !important .text-dark recoloring in dark mode. -->
+    <script>
+        function applyWarningBadgeContrast() {
+            const dark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+            // Warning badges: force dark text (white on yellow is unreadable)
+            document.querySelectorAll('.badge.bg-warning, .temp-toggle.bg-warning').forEach(el => {
+                el.style.color = dark ? '#000' : '';
+            });
+            // Secondary badges: Bootstrap dark mode shifts bg-secondary to amber —
+            // pin to standard gray with white text
+            document.querySelectorAll('.badge.bg-secondary').forEach(el => {
+                el.style.backgroundColor = dark ? '#6c757d' : '';
+                el.style.color = dark ? '#fff' : '';
+            });
+        }
+        document.addEventListener('DOMContentLoaded', applyWarningBadgeContrast);
+        new MutationObserver(applyWarningBadgeContrast).observe(
+            document.documentElement, { attributes: true, attributeFilter: ['data-bs-theme'] }
+        );
+    </script>
+
+    {% block extra_js %}{% endblock %}
+
+    <!-- ── Page-level help panels ──────────────────────────────────────────── -->
+    <script>
+    function toggleHelpPanel(key) {
+        const body = document.getElementById('help-body-' + key);
+        const chev = document.getElementById('help-chev-' + key);
+        if (!body) return;
+        const isShown = body.style.display !== 'none';
+        body.style.display = isShown ? 'none' : '';
+        chev.className = 'bi bi-chevron-' + (isShown ? 'down' : 'up');
+        localStorage.setItem('helpPanel_' + key, isShown ? 'hidden' : 'shown');
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('[data-help-key]').forEach(el => {
+            const key = el.dataset.helpKey;
+            const body = document.getElementById('help-body-' + key);
+            const chev = document.getElementById('help-chev-' + key);
+            // Collapsed by default; only expand if user previously opened it
+            if (localStorage.getItem('helpPanel_' + key) === 'shown') {
+                if (body) body.style.display = '';
+                if (chev) chev.className = 'bi bi-chevron-up help-chev';
+            } else {
+                if (body) body.style.display = 'none';
+                if (chev) chev.className = 'bi bi-chevron-down help-chev';
+            }
+        });
+    });
+    </script>
+
+    <script>
+    // ── Notification bell ──────────────────────────────────────────────────────
+    (function () {
+        const badge    = document.getElementById('notif-badge');
+        const list     = document.getElementById('notif-list');
+        const empty    = document.getElementById('notif-empty');
+        const markAll  = document.getElementById('notif-mark-all');
+
+        function timeAgo(iso) {
+            const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+            if (diff < 60)   return 'just now';
+            if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+            if (diff < 86400)return Math.floor(diff / 3600) + 'h ago';
+            return Math.floor(diff / 86400) + 'd ago';
+        }
+
+        function iconFor(type) {
+            return type === 'access_request'  ? 'bi-person-plus text-warning'  :
+                   type === 'request_approved'? 'bi-check-circle text-success' :
+                   type === 'request_rejected'? 'bi-x-circle text-danger'      :
+                                               'bi-info-circle text-info';
+        }
+
+        function linkFor(n) {
+            if (n.notification_type === 'access_request') return '/admin/access-requests';
+            return null;
+        }
+
+        function render(notifications) {
+            const unread = notifications.filter(n => !n.is_read);
+            if (unread.length > 0) {
+                badge.textContent = unread.length > 99 ? '99+' : unread.length;
+                badge.style.display = '';
+            } else {
+                badge.style.display = 'none';
+            }
+
+            if (notifications.length === 0) {
+                list.innerHTML = '';
+                list.appendChild(empty);
+                return;
+            }
+
+            list.innerHTML = notifications.map(n => {
+                const href = linkFor(n);
+                const tag  = href ? `a href="${href}"` : 'div';
+                const end  = href ? 'a' : 'div';
+                return `
+                <${tag} class="dropdown-item d-flex gap-2 py-2 px-3 border-bottom
+                               ${n.is_read ? 'text-muted' : ''}"
+                        style="white-space:normal; cursor:pointer;"
+                        data-notif-id="${n.notification_id}">
+                    <div class="pt-1 flex-shrink-0">
+                        <i class="bi ${iconFor(n.notification_type)}"></i>
+                    </div>
+                    <div class="flex-grow-1 overflow-hidden">
+                        <div class="fw-semibold text-truncate" style="font-size:0.82rem;">
+                            ${n.title}
+                        </div>
+                        <div class="text-truncate" style="font-size:0.78rem;">${n.message}</div>
+                        <div style="font-size:0.72rem; opacity:0.6;">${timeAgo(n.created_at)}</div>
+                    </div>
+                    ${!n.is_read ? '<div class="flex-shrink-0 pt-1"><span class="rounded-circle bg-primary d-inline-block" style="width:7px;height:7px;"></span></div>' : ''}
+                </${end}>`;
+            }).join('');
+
+            // Mark individual as read on click
+            list.querySelectorAll('[data-notif-id]').forEach(el => {
+                el.addEventListener('click', function () {
+                    const id = this.dataset.notifId;
+                    fetch(`/api/notifications/${id}/mark-read`, { method: 'POST' });
+                });
+            });
+        }
+
+        function fetchNotifications() {
+            fetch('/api/notifications')
+                .then(r => r.ok ? r.json() : [])
+                .then(render)
+                .catch(() => {});
+        }
+
+        markAll.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            fetch('/api/notifications/mark-all-read', { method: 'POST' })
+                .then(() => fetchNotifications());
+        });
+
+        // Load on dropdown open
+        document.getElementById('notifDropdown')
+            .addEventListener('show.bs.dropdown', fetchNotifications);
+
+        // Poll badge count every 30 s
+        function pollCount() {
+            fetch('/api/notifications/unread-count')
+                .then(r => r.ok ? r.json() : { count: 0 })
+                .then(data => {
+                    if (data.count > 0) {
+                        badge.textContent = data.count > 99 ? '99+' : data.count;
+                        badge.style.display = '';
+                    } else {
+                        badge.style.display = 'none';
+                    }
+                })
+                .catch(() => {});
+        }
+        pollCount();
+        setInterval(pollCount, 30000);
+    })();
+    </script>
+
+    <script>
+    (function () {
+        const canvas = document.getElementById('starfield-bg');
+        const ctx    = canvas.getContext('2d');
+        const STAR_COUNT = 280;
+        let stars      = [];
+        let animFrame  = null;
+        let running    = false;
+
+        function resize() {
+            canvas.width  = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+
+        function buildStars() {
+            stars = [];
+            for (let i = 0; i < STAR_COUNT; i++) {
+                const r = Math.random();
+                stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    size: r < 0.70 ? 0.5 + Math.random() * 0.6
+                         : r < 0.92 ? 1.0 + Math.random() * 0.8
+                         :             1.8 + Math.random() * 1.0,
+                    alpha:       0.35 + Math.random() * 0.65,
+                    alphaTarget: 0.25 + Math.random() * 0.75,
+                    alphaSpeed:  0.003 + Math.random() * 0.010,
+                    hue: Math.random() < 0.15
+                           ? `hsl(${30  + Math.random() * 30}, 60%, 95%)`
+                           : `hsl(${200 + Math.random() * 60}, 60%, 95%)`,
+                });
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            for (const s of stars) {
+                s.alpha += s.alpha < s.alphaTarget ? s.alphaSpeed : -s.alphaSpeed;
+                if (Math.abs(s.alpha - s.alphaTarget) < 0.01) {
+                    s.alphaTarget = 0.15 + Math.random() * 0.85;
+                    s.alphaSpeed  = 0.002 + Math.random() * 0.010;
+                }
+                ctx.beginPath();
+                ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+                ctx.fillStyle = s.hue
+                    .replace('hsl(', 'hsla(')
+                    .replace(')', `, ${s.alpha.toFixed(3)})`);
+                ctx.fill();
+            }
+            animFrame = requestAnimationFrame(draw);
+        }
+
+        function start() {
+            if (running) return;
+            running = true;
+            resize();
+            buildStars();
+            draw();
+        }
+
+        function stop() {
+            if (!running) return;
+            running = false;
+            if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function isDark() {
+            return document.documentElement.getAttribute('data-bs-theme') === 'dark';
+        }
+
+        // Start or stop based on current theme
+        if (isDark()) start();
+
+        // React to theme changes triggered by the existing theme JS
+        const observer = new MutationObserver(() => {
+            isDark() ? start() : stop();
+        });
+        observer.observe(document.documentElement, {
+            attributes: true, attributeFilter: ['data-bs-theme']
+        });
+
+        window.addEventListener('resize', () => {
+            if (!running) return;
+            resize();
+            buildStars();
+        });
+    })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}Assign Configlet - {{ device.hostname }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h2><i class="bi bi-plus-circle"></i> Assign Configlet to {{ device.hostname }}</h2>
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('dashboard') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('devices') }}">Devices</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('device_detail', hostname=device.hostname) }}">{{ device.hostname }}</a></li>
+                    <li class="breadcrumb-item active">Assign Configlet</li>
+                </ol>
+            </nav>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Select Configlet</h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('assign_configlet', hostname=device.hostname) }}">
+                        <div class="mb-3">
+                            <label for="configlet" class="form-label">Configlet</label>
+                            <select class="form-select" id="configlet" name="configlet" required>
+                                <option value="">Choose a configlet...</option>
+                                {% for configlet_name in configlets %}
+                                <option value="{{ configlet_name }}">{{ configlet_name }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Select the configlet to assign to this device. This will create a task for deployment.</div>
+                        </div>
+
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <a href="{{ url_for('device_detail', hostname=device.hostname) }}" class="btn btn-secondary">
+                                <i class="bi bi-x-circle"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-circle"></i> Create Assignment Task
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Device Information</h5>
+                </div>
+                <div class="card-body">
+                    <dl class="row mb-0">
+                        <dt class="col-sm-5">Hostname:</dt>
+                        <dd class="col-sm-7">{{ device.hostname }}</dd>
+
+                        <dt class="col-sm-5">IP Address:</dt>
+                        <dd class="col-sm-7">{{ device.ip_address }}</dd>
+
+                        <dt class="col-sm-5">Role:</dt>
+                        <dd class="col-sm-7">
+                            <span class="badge bg-info">{{ device.role.value }}</span>
+                        </dd>
+
+                        <dt class="col-sm-5">Site:</dt>
+                        <dd class="col-sm-7">{{ device.site }}</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

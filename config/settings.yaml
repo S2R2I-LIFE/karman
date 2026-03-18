@@ -1,0 +1,58 @@
+# Kármán Settings
+
+# Database settings
+database:
+  path: custom-cvp.db
+  backup_path: backups/
+
+# CVP Connection (for CVP-managed devices)
+cvp:
+  host: cvp.datacenter.local
+  username: cvpadmin
+  password: ""  # Use environment variable or secrets management
+  api_version: v1
+
+# Default device credentials
+default_credentials:
+  username: admin
+  password: ""  # Use environment variable
+  enable_password: ""
+
+# Template settings
+templates:
+  directory: templates
+  cache_enabled: true
+
+# Output settings
+output:
+  directory: output
+  backup_enabled: true
+  timestamp_format: "%Y%m%d_%H%M%S"
+
+# Task settings
+tasks:
+  max_concurrent: 10
+  timeout_seconds: 300
+  retry_count: 3
+  retry_delay_seconds: 60
+
+# Logging settings
+logging:
+  level: INFO
+  file: logs/orchestrator.log
+  max_size_mb: 100
+  backup_count: 10
+
+# Validation settings
+validation:
+  strict_mode: false
+  syntax_check_enabled: true
+  schema_validation_enabled: true
+
+# Git integration (optional)
+git:
+  enabled: false
+  repository: ""
+  branch: main
+  auto_commit: false
+  commit_message_prefix: "[Kármán]"

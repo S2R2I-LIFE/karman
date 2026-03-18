@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kármán Documentation</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: #020b18;
+            color: #c8daf0;
+            font-family: inherit;
+            padding: 48px 0 80px;
+        }
+
+        /* Fixed starfield canvas */
+        #starfield {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        /* Nebula glow layers */
+        .nebula {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.10;
+            z-index: 0;
+            pointer-events: none;
+        }
+        .nebula-1 {
+            width: 600px; height: 400px;
+            background: radial-gradient(ellipse, #3b1f6b, transparent 70%);
+            top: -100px; left: -100px;
+            animation: nebula-drift 40s ease-in-out infinite alternate;
+        }
+        .nebula-2 {
+            width: 500px; height: 350px;
+            background: radial-gradient(ellipse, #0d3d6b, transparent 70%);
+            bottom: 10%; right: -80px;
+            animation: nebula-drift 50s ease-in-out infinite alternate-reverse;
+        }
+        .nebula-3 {
+            width: 300px; height: 300px;
+            background: radial-gradient(ellipse, #1a4a2e, transparent 70%);
+            top: 40%; left: 55%;
+            opacity: 0.07;
+            animation: nebula-drift 35s ease-in-out infinite alternate;
+        }
+        @keyframes nebula-drift {
+            from { transform: translate(0, 0) scale(1); }
+            to   { transform: translate(40px, 20px) scale(1.08); }
+        }
+
+        /* Main scrollable container */
+        .doc-container {
+            position: relative;
+            z-index: 10;
+            background: rgba(8, 18, 36, 0.78);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            backdrop-filter: blur(18px) saturate(1.4);
+            -webkit-backdrop-filter: blur(18px) saturate(1.4);
+            box-shadow:
+                0 0 0 1px rgba(100, 160, 255, 0.06),
+                0 8px 48px rgba(0, 0, 0, 0.6),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 48px 48px 56px;
+        }
+
+        /* Header */
+        .doc-header {
+            text-align: center;
+            margin-bottom: 48px;
+            padding-bottom: 32px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+        }
+        .doc-header h1 { color: #e8f0ff; font-weight: 600; }
+        .doc-header .lead { color: rgba(180, 200, 240, 0.6); }
+
+        /* Section titles */
+        .section-title {
+            color: #a8c8ff;
+            border-bottom: 1px solid rgba(100, 160, 255, 0.25);
+            padding-bottom: 10px;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        /* Cards */
+        .doc-card {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            padding: 20px 24px;
+            margin-bottom: 18px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .doc-card:hover {
+            border-color: rgba(100, 160, 255, 0.25);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+        }
+        .doc-card h4,
+        .doc-card h5 { color: #d0e4ff; margin-bottom: 10px; }
+
+        .doc-icon {
+            font-size: 2rem;
+            color: #60a0ff;
+            margin-bottom: 10px;
+            display: block;
+        }
+
+        /* Code blocks */
+        .code-block {
+            background: rgba(0, 0, 0, 0.45);
+            border: 1px solid rgba(100, 160, 255, 0.15);
+            border-radius: 6px;
+            padding: 14px 16px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.875rem;
+            color: #a8d8b8;
+            overflow-x: auto;
+            line-height: 1.6;
+        }
+
+        /* Tables */
+        .table {
+            color: #c8daf0;
+        }
+        .table-bordered td, .table-bordered th {
+            border-color: rgba(255, 255, 255, 0.10);
+        }
+        .table-light thead th {
+            background: rgba(100, 160, 255, 0.12);
+            color: #a8c8ff;
+            border-color: rgba(100, 160, 255, 0.20);
+        }
+        .table td code {
+            background: rgba(0,0,0,0.3);
+            border-radius: 3px;
+            padding: 1px 5px;
+            color: #a8d8b8;
+            font-size: 0.82rem;
+        }
+
+        /* Lists */
+        ul li, ol li { margin-bottom: 4px; color: #b8cce8; }
+        a { color: #60a0ff; }
+        a:hover { color: #90c0ff; }
+
+        strong { color: #d8eaff; }
+        p { color: #b0c8e8; }
+
+        code {
+            background: rgba(0,0,0,0.35);
+            border-radius: 3px;
+            padding: 1px 5px;
+            color: #a8d8b8;
+            font-size: 0.88em;
+        }
+
+        /* Footer */
+        .doc-footer {
+            text-align: center;
+            margin-top: 48px;
+            padding-top: 24px;
+            border-top: 1px solid rgba(255,255,255,0.07);
+            color: rgba(150, 180, 230, 0.4);
+            font-size: 0.85rem;
+        }
+        .doc-footer .btn-primary {
+            background: linear-gradient(135deg, #3b6fd4, #7c3aed);
+            border: none;
+            box-shadow: 0 4px 16px rgba(96, 80, 200, 0.35);
+        }
+        .doc-footer .btn-primary:hover {
+            opacity: 0.88;
+            box-shadow: 0 4px 24px rgba(96, 80, 200, 0.55);
+        }
+
+        @media (max-width: 768px) {
+            .doc-container { padding: 28px 20px 40px; border-radius: 0; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Nebula glow layers -->
+    <div class="nebula nebula-1"></div>
+    <div class="nebula nebula-2"></div>
+    <div class="nebula nebula-3"></div>
+
+    <!-- Starfield canvas -->
+    <canvas id="starfield"></canvas>
+
+    <div class="container px-3">
+        <div class="doc-container">
+
+            <!-- Header -->
+            <div class="doc-header">
+                <h1><i class="bi bi-cloud-arrow-up-fill"></i> Kármán Documentation</h1>
+                <p class="lead mt-2">Complete guide to managing your Arista network infrastructure</p>
+            </div>
+
+            <!-- Quick Start -->
+            <h2 class="section-title"><i class="bi bi-play-circle"></i> Quick Start</h2>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="doc-card">
+                        <span class="doc-icon"><i class="bi bi-terminal"></i></span>
+                        <h4>CLI Access</h4>
+                        <p>Command-line interface for advanced operations and automation.</p>
+                        <div class="code-block">
+                            # View all devices<br>
+                            python3 cli/orchestrator_cli.py inventory list<br><br>
+                            # Build configuration<br>
+                            python3 cli/orchestrator_cli.py builder build
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="doc-card">
+                        <span class="doc-icon"><i class="bi bi-window"></i></span>
+                        <h4>Web Interface</h4>
+                        <p>Full-featured dashboard for visual management and monitoring.</p>
+                        <div class="code-block">
+                            # Start with Docker<br>
+                            docker compose up -d<br><br>
+                            # Access at:<br>
+                            http://&lt;host&gt;:5000
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Features -->
+            <h2 class="section-title"><i class="bi bi-stars"></i> Features</h2>
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="doc-card">
+                        <span class="doc-icon"><i class="bi bi-hdd-network"></i></span>
+                        <h5>Device Management</h5>
+                        <ul>
+                            <li>Hybrid CVP + Custom management</li>
+                            <li>eAPI, SSH, gNMI / TerminAttr</li>
+                            <li>Role-based organization</li>
+                            <li>YAML import/export</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="doc-card">
+                        <span class="doc-icon"><i class="bi bi-file-earmark-code"></i></span>
+                        <h5>Configuration Management</h5>
+                        <ul>
+                            <li>Template-based configs (Jinja2)</li>
+                            <li>Version control &amp; history</li>
+                            <li>25+ CVP configlets imported</li>
+                            <li>Syntax validation</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="doc-card">
+                        <span class="doc-icon"><i class="bi bi-list-check"></i></span>
+                        <h5>Change Management</h5>
+                        <ul>
+                            <li>Task-based workflow</li>
+                            <li>Approval process</li>
+                            <li>Execution tracking</li>
+                            <li>Rollback capability</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Management Protocols -->
+            <h2 class="section-title"><i class="bi bi-plug"></i> Management Protocols</h2>
+            <p>Each device can be managed via one of four protocols. Set the <strong>Management Type</strong> when adding or editing a device.</p>
+
+            <div class="row mt-3">
+                <div class="col-md-6">
+                    <div class="doc-card">
+                        <h5><i class="bi bi-lock text-success"></i> eAPI (HTTPS) &mdash; <em>Recommended</em></h5>
+                        <p>Arista's REST/JSON API over HTTPS (port 443). Provides the richest telemetry: interfaces, CPU, memory, temperature, and version information.</p>
+                        <p><strong>EOS config required:</strong></p>
+                        <div class="code-block">management api http-commands<br>&nbsp;&nbsp;no shutdown</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="doc-card">
+                        <h5><i class="bi bi-terminal"></i> SSH</h5>
+                        <p>Connects over SSH (port 22) and parses CLI output. Works on any device with SSH enabled. Telemetry is parsed from <code>show</code> command text.</p>
+                        <p><strong>EOS config required:</strong></p>
+                        <div class="code-block">username admin privilege 15 secret &lt;pass&gt;</div>
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="doc-card">
+                        <h5><i class="bi bi-broadcast"></i> gNMI / TerminAttr</h5>
+                        <p>gRPC Network Management Interface via Arista's TerminAttr daemon (default port <strong>6030</strong>). Used in production environments where eAPI is unavailable or telemetry streaming is preferred.</p>
+                        <p><strong>What is collected:</strong></p>
+                        <ul>
+                            <li>Interface up / down counts</li>
+                            <li>Device reachability status</li>
+                        </ul>
+                        <p class="mb-1 mt-2"><strong>EOS configuration:</strong></p>
+                        <div class="code-block">daemon TerminAttr<br>&nbsp;&nbsp;exec /usr/bin/TerminAttr \<br>&nbsp;&nbsp;&nbsp;&nbsp;-grpcaddr=mgmt/0.0.0.0:6030 \<br>&nbsp;&nbsp;&nbsp;&nbsp;-allowed_ips=0.0.0.0/0<br>&nbsp;&nbsp;no shutdown</div>
+                        <p class="mt-2 mb-0"><small style="color:rgba(150,180,230,0.55);">Replace <code>mgmt</code> with your management VRF, or use <code>0.0.0.0:6030</code> if the management interface is in the default VRF.</small></p>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="doc-card">
+                        <h5><i class="bi bi-cloud"></i> CVP</h5>
+                        <p>Delegates management to CloudVision Portal. Kármán tracks these devices in inventory but does not push configuration directly — changes go through CVP.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- gNMI Detail -->
+            <h2 class="section-title"><i class="bi bi-broadcast"></i> gNMI / TerminAttr — Detail</h2>
+
+            <div class="doc-card">
+                <h5>How the connection works</h5>
+                <ol>
+                    <li>Kármán performs an SSL probe to the gNMI port to detect whether the server uses TLS.</li>
+                    <li>If TLS is confirmed, the device certificate is fetched and used as the trusted root (TOFU — Trust On First Use). No pre-installed CA certificate is required.</li>
+                    <li>If no TLS is detected (common on vEOS-lab), the connection falls back to plaintext gRPC automatically.</li>
+                    <li>The gNMI <em>Capabilities</em> RPC is optional and may return UNIMPLEMENTED on some TerminAttr versions — this is handled gracefully and does not prevent collection.</li>
+                </ol>
+            </div>
+
+            <div class="doc-card">
+                <h5>Data paths used</h5>
+                <p>Kármán uses Arista's <code>eos_native</code> origin rather than OpenConfig. OpenConfig paths require a full CloudVision subscription to be populated; <code>eos_native</code> Sysdb paths are always available.</p>
+                <table class="table table-sm table-bordered mt-3">
+                    <thead class="table-light"><tr><th>Data</th><th>gNMI path</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td>Interface up / down status</td>
+                            <td><code>eos_native:/Sysdb/interface/status/eth/phy/slice/1/intfStatus</code></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p style="color:rgba(150,180,230,0.55); margin-bottom:0;"><small>On production deployments with a CVP licence, OpenConfig paths (<code>/interfaces</code>, <code>/system</code>, <code>/components</code>) will also return EOS version, model, serial number, and temperature sensors.</small></p>
+            </div>
+
+            <div class="doc-card">
+                <h5>Configurable port</h5>
+                <p>The default gNMI port is <strong>6030</strong>. If your TerminAttr is bound to a different port, set the <strong>gNMI Port</strong> field when adding or editing the device. The field is only shown when the management type is gNMI / TerminAttr.</p>
+            </div>
+
+            <div class="doc-card">
+                <h5>Port conflict: TerminAttr vs <code>management api gnmi</code></h5>
+                <p>EOS has two gNMI options that <strong>cannot share port 6030</strong>:</p>
+                <ul>
+                    <li><code>management api gnmi</code> — EOS native gNMI (no TerminAttr daemon needed)</li>
+                    <li><code>daemon TerminAttr</code> — Arista's streaming telemetry agent</li>
+                </ul>
+                <p class="mb-0">Use one or the other. If both are configured, TerminAttr will fail to bind and restart repeatedly (<code>PROCESS_DELAYRESTART</code>). To use TerminAttr, remove <code>management api gnmi</code> from the config.</p>
+            </div>
+
+            <div class="doc-card">
+                <h5>Required Python package</h5>
+                <div class="code-block">pip install pygnmi&gt;=0.8.0</div>
+                <p class="mt-2 mb-0">Already included in <code>requirements.txt</code>. The gNMI connector disables itself gracefully if <code>pygnmi</code> is not installed.</p>
+            </div>
+
+            <!-- Network Topology -->
+            <h2 class="section-title"><i class="bi bi-diagram-3"></i> Network Topology</h2>
+            <p>The <strong>Topology</strong> page discovers and visualises physical connectivity between devices using LLDP. Click <strong>Discover Topology</strong> to query all managed devices and build the graph in real time.</p>
+
+            <div class="row mt-3">
+                <div class="col-md-6">
+                    <div class="doc-card">
+                        <h5><i class="bi bi-arrows-angle-expand"></i> Graph Controls</h5>
+                        <ul>
+                            <li><strong>Click a node</strong> — opens the side panel showing role, IP, model, management type, and directly connected neighbours.</li>
+                            <li><strong>Double-click a node</strong> — navigates to the device detail page.</li>
+                            <li><strong>Click a link table row</strong> — highlights the corresponding edge in the graph.</li>
+                            <li><strong>Fit</strong> — re-centres and zooms the graph to fit all nodes.</li>
+                            <li><strong>Export</strong> — saves the current graph as a PNG image.</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="doc-card">
+                        <h5><i class="bi bi-broadcast-pin"></i> LLDP Discovery &amp; Fallback</h5>
+                        <p>Kármán queries each device for LLDP neighbours using the best available protocol:</p>
+                        <ol>
+                            <li><strong>gNMI (OpenConfig)</strong> — tried first for gNMI/TerminAttr devices. Requires a CVP licence to populate; empty on bare vEOS-lab.</li>
+                            <li><strong>SSH fallback</strong> — if gNMI returns no LLDP data, Kármán falls back to <code>show lldp neighbors detail</code> over SSH.</li>
+                            <li><strong>eAPI</strong> — used directly for eAPI-managed devices.</li>
+                        </ol>
+                        <p class="mb-0">The <strong>LLDP Discovery Status</strong> table (below the link table) shows which source was used per device and how many neighbours were found.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="doc-card mt-3">
+                <h5><i class="bi bi-info-circle"></i> Notes</h5>
+                <ul>
+                    <li>Management interfaces (e.g. <code>Management0</code>, <code>Management1</code>) are automatically excluded — only data-plane links are shown.</li>
+                    <li>Each physical link is de-duplicated regardless of which device reported it first, so the same cable never appears twice.</li>
+                    <li>Nodes that appear as LLDP neighbours but are not in the Kármán inventory are added to the graph automatically as <em>unknown</em> nodes.</li>
+                    <li>LLDP must be enabled on the devices: <code>lldp run</code> (enabled by default on EOS).</li>
+                </ul>
+            </div>
+
+            <!-- Documentation Links -->
+            <h2 class="section-title"><i class="bi bi-book"></i> Documentation Resources</h2>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="doc-card">
+                        <h5><i class="bi bi-file-text"></i> Core Documentation</h5>
+                        <ul>
+                            <li><a href="/static/docs/README.html" target="_blank">README — Platform Overview</a></li>
+                            <li><a href="/static/docs/QUICK_START.html" target="_blank">Quick Start Guide</a></li>
+                            <li><a href="/static/docs/WEB_INTERFACE.html" target="_blank">Web Interface Guide</a></li>
+                            <li><a href="/static/docs/EXAMPLES.html" target="_blank">Usage Examples</a></li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="doc-card">
+                        <h5><i class="bi bi-code-slash"></i> API &amp; Integration</h5>
+                        <ul>
+                            <li><a href="/api/stats" target="_blank">Platform Statistics API</a></li>
+                            <li><a href="/api/topology" target="_blank">Network Topology API</a></li>
+                            <li><a href="#api-docs">API Documentation (below)</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- API Documentation -->
+            <h2 class="section-title" id="api-docs"><i class="bi bi-cloud"></i> API Endpoints</h2>
+            <div class="doc-card">
+                <h5>GET /api/stats</h5>
+                <p>Returns platform statistics including device counts, configlet counts, and task status.</p>
+                <div class="code-block">curl http://localhost:5000/api/stats</div>
+                <p class="mt-3"><strong>Response:</strong></p>
+                <div class="code-block">
+{<br>
+&nbsp;&nbsp;"devices": {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;"total": 25,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;"cvp_managed": 5,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;"custom_managed": 20<br>
+&nbsp;&nbsp;},<br>
+&nbsp;&nbsp;"configlets": {"total": 32},<br>
+&nbsp;&nbsp;"tasks": {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;"total": 15,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;"pending": 3,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;"completed": 12<br>
+&nbsp;&nbsp;}<br>
+}
+                </div>
+            </div>
+
+            <div class="doc-card mt-3">
+                <h5>GET /api/topology</h5>
+                <p>Returns static node list from the device inventory (no live LLDP query).</p>
+                <div class="code-block">curl http://localhost:5000/api/topology</div>
+            </div>
+
+            <div class="doc-card mt-3">
+                <h5>GET /api/topology/discover</h5>
+                <p>Actively queries all managed devices via LLDP to build the live topology. Returns nodes, links, per-device discovery status, and summary stats. This is what the Topology page calls when you click <strong>Discover Topology</strong>.</p>
+                <div class="code-block">curl http://localhost:5000/api/topology/discover</div>
+                <p class="mt-3"><strong>Response:</strong></p>
+                <div class="code-block">
+{<br>
+&nbsp;&nbsp;"success": true,<br>
+&nbsp;&nbsp;"topology": {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;"nodes": [{"id": "switch3", "role": "unknown", "ip": "192.168.2.13", ...}],<br>
+&nbsp;&nbsp;&nbsp;&nbsp;"links": [{"from": "switch5", "from_interface": "Ethernet1", "to": "switch3", "to_interface": "Ethernet2", ...}]<br>
+&nbsp;&nbsp;},<br>
+&nbsp;&nbsp;"stats": {"total_nodes": 5, "total_links": 3},<br>
+&nbsp;&nbsp;"device_status": [{"hostname": "switch5", "lldp_source": "ssh_fallback", "neighbor_count": 2, "error": null}]<br>
+}
+                </div>
+            </div>
+
+            <!-- Architecture -->
+            <h2 class="section-title"><i class="bi bi-diagram-3"></i> Architecture</h2>
+            <div class="doc-card">
+                <h5>Platform Components</h5>
+                <ul>
+                    <li><strong>Core Modules:</strong> inventory.py, configlet.py, task.py</li>
+                    <li><strong>Connectors:</strong> eAPI, CVP, SSH, gNMI / TerminAttr</li>
+                    <li><strong>Builder:</strong> Jinja2-based configuration generation</li>
+                    <li><strong>Web Interface:</strong> Flask + Bootstrap 5</li>
+                    <li><strong>Database:</strong> SQLite for persistence</li>
+                    <li><strong>CLI:</strong> orchestrator_cli.py for automation</li>
+                </ul>
+            </div>
+
+            <!-- Support -->
+            <h2 class="section-title"><i class="bi bi-question-circle"></i> Getting Help</h2>
+            <div class="doc-card">
+                <h5>Troubleshooting</h5>
+                <ul>
+                    <li>Check the <code>logs/</code> directory for application logs</li>
+                    <li>Review WEB_INTERFACE.md for web-specific issues</li>
+                    <li>Verify all dependencies: <code>pip install -r requirements.txt</code></li>
+                    <li>Ensure database permissions: <code>chmod 644 custom-cvp.db</code></li>
+                </ul>
+
+                <h5 class="mt-4">Common Issues</h5>
+                <ul>
+                    <li><strong>Port in use:</strong> Change port in .env or kill existing process</li>
+                    <li><strong>Database locked:</strong> Close other instances of the application</li>
+                    <li><strong>Templates not found:</strong> Run from project root directory</li>
+                    <li><strong>Connection failed:</strong> Verify device credentials and network connectivity</li>
+                </ul>
+
+                <h5 class="mt-4">gNMI / TerminAttr Issues</h5>
+                <ul>
+                    <li>
+                        <strong>Device shows DOWN despite TerminAttr running:</strong>
+                        Check that <code>-grpcaddr</code> includes the correct VRF.
+                        If Management1 is in VRF <code>mgmt</code>, use <code>-grpcaddr=mgmt/0.0.0.0:6030</code>.
+                        Without the VRF prefix, TerminAttr binds in the default VRF and is unreachable.
+                    </li>
+                    <li>
+                        <strong>TerminAttr flapping / PROCESS_DELAYRESTART:</strong>
+                        Port 6030 is already in use by <code>management api gnmi</code>.
+                        Remove one — they cannot coexist. Check with: <code>show daemon TerminAttr</code>
+                    </li>
+                    <li>
+                        <strong>GRPC ERROR: Not implemented yet:</strong>
+                        This TerminAttr version does not implement gNMI Capabilities.
+                        Kármán handles this automatically — it is a warning, not a fatal error.
+                        If <em>all</em> RPCs fail, verify the VRF setting.
+                    </li>
+                    <li>
+                        <strong>Interface counts show 0:</strong>
+                        Run <code>gnmic -a &lt;ip&gt;:6030 --insecure -u admin -p &lt;pass&gt; get --path "eos_native:/Sysdb/interface/status/eth/phy/slice/1/intfStatus" --encoding json</code>
+                        from the Kármán host to confirm the path returns data.
+                    </li>
+                    <li>
+                        <strong>pygnmi not installed:</strong>
+                        Rebuild the Docker image: <code>docker compose down &amp;&amp; docker compose build &amp;&amp; docker compose up -d</code>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Footer -->
+            <div class="doc-footer">
+                <a href="/" class="btn btn-primary mb-3">
+                    <i class="bi bi-house"></i> Return to Dashboard
+                </a>
+                <p class="mt-2">Kármán Platform &nbsp;·&nbsp; Flask + Bootstrap 5 + Python 3</p>
+            </div>
+
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    (function () {
+        const canvas = document.getElementById('starfield');
+        const ctx    = canvas.getContext('2d');
+
+        function resize() {
+            canvas.width  = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', () => { resize(); buildStars(); });
+        resize();
+
+        const STAR_COUNT = 320;
+        let stars = [];
+
+        function buildStars() {
+            stars = [];
+            for (let i = 0; i < STAR_COUNT; i++) {
+                const r = Math.random();
+                stars.push({
+                    x:    Math.random() * canvas.width,
+                    y:    Math.random() * canvas.height,
+                    size: r < 0.70 ? 0.5 + Math.random() * 0.6
+                         : r < 0.92 ? 1.0 + Math.random() * 0.8
+                         :             1.8 + Math.random() * 1.0,
+                    alpha:       0.35 + Math.random() * 0.65,
+                    alphaTarget: 0.25 + Math.random() * 0.75,
+                    alphaSpeed:  0.003 + Math.random() * 0.012,
+                    hue: Math.random() < 0.15
+                           ? `hsl(${30  + Math.random()*30},  60%, 95%)`
+                           : `hsl(${200 + Math.random()*60}, 60%, 95%)`,
+                });
+            }
+        }
+        buildStars();
+
+        let shooters = [];
+
+        function spawnShooter() {
+            const edge = Math.floor(Math.random() * 4);
+            const spread = 40;
+            let x, y, baseDeg;
+            switch (edge) {
+                case 0: x = Math.random() * canvas.width;  y = -10;                baseDeg = 90;  break;
+                case 1: x = canvas.width + 10;             y = Math.random() * canvas.height; baseDeg = 180; break;
+                case 2: x = Math.random() * canvas.width;  y = canvas.height + 10; baseDeg = 270; break;
+                default: x = -10; y = Math.random() * canvas.height; baseDeg = 0; break;
+            }
+            const angle = (baseDeg + (Math.random() * spread * 2 - spread)) * Math.PI / 180;
+            shooters.push({
+                x, y, angle,
+                speed:     9 + Math.random() * 14,
+                length:    90 + Math.random() * 180,
+                alpha:     0,
+                phase:     'fadein',
+                traveled:  0,
+                maxTravel: 350 + Math.random() * 400,
+                width:     1.0 + Math.random() * 1.2,
+            });
+        }
+
+        let nextShooterIn = 1800 + Math.random() * 3000;
+        let lastShooterTime = 0;
+
+        function draw(timestamp) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            for (const s of stars) {
+                s.alpha += s.alpha < s.alphaTarget ? s.alphaSpeed : -s.alphaSpeed;
+                if (Math.abs(s.alpha - s.alphaTarget) < 0.01) {
+                    s.alphaTarget = 0.15 + Math.random() * 0.85;
+                    s.alphaSpeed  = 0.002 + Math.random() * 0.010;
+                }
+                ctx.beginPath();
+                ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+                ctx.fillStyle = s.hue.replace('hsl(', 'hsla(').replace(')', `, ${s.alpha.toFixed(3)})`);
+                ctx.fill();
+            }
+
+            if (timestamp - lastShooterTime > nextShooterIn) {
+                spawnShooter();
+                if (Math.random() < 0.18) spawnShooter();
+                lastShooterTime = timestamp;
+                nextShooterIn   = 1500 + Math.random() * 4000;
+            }
+
+            for (let i = shooters.length - 1; i >= 0; i--) {
+                const s  = shooters[i];
+                const dx = Math.cos(s.angle) * s.speed;
+                const dy = Math.sin(s.angle) * s.speed;
+
+                if (s.phase === 'fadein') {
+                    s.alpha += 0.08;
+                    if (s.alpha >= 1) { s.alpha = 1; s.phase = 'travel'; }
+                } else if (s.phase === 'travel') {
+                    s.traveled += s.speed;
+                    if (s.traveled > s.maxTravel) s.phase = 'fadeout';
+                } else {
+                    s.alpha -= 0.05;
+                    if (s.alpha <= 0) { shooters.splice(i, 1); continue; }
+                }
+
+                const tx = s.x - Math.cos(s.angle) * s.length;
+                const ty = s.y - Math.sin(s.angle) * s.length;
+                const grad = ctx.createLinearGradient(tx, ty, s.x, s.y);
+                grad.addColorStop(0,   `rgba(255,255,255,0)`);
+                grad.addColorStop(0.6, `rgba(200,230,255,${(s.alpha * 0.4).toFixed(3)})`);
+                grad.addColorStop(1,   `rgba(255,255,255,${s.alpha.toFixed(3)})`);
+
+                ctx.beginPath();
+                ctx.moveTo(tx, ty);
+                ctx.lineTo(s.x, s.y);
+                ctx.strokeStyle = grad;
+                ctx.lineWidth   = s.width;
+                ctx.lineCap     = 'round';
+                ctx.stroke();
+
+                const glow = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, 4);
+                glow.addColorStop(0, `rgba(255,255,255,${s.alpha.toFixed(3)})`);
+                glow.addColorStop(1, `rgba(200,230,255,0)`);
+                ctx.beginPath();
+                ctx.arc(s.x, s.y, 4, 0, Math.PI * 2);
+                ctx.fillStyle = glow;
+                ctx.fill();
+
+                s.x += dx;
+                s.y += dy;
+            }
+
+            requestAnimationFrame(draw);
+        }
+
+        requestAnimationFrame(draw);
+    })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,687 @@
+{% extends "base.html" %}
+
+{% block title %}MIB Browser - {{ app_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── Layout ─────────────────────────────────────────────────────────────────── */
+#mib-layout {
+    display: flex;
+    gap: 0;
+    height: calc(100vh - 140px);
+    min-height: 500px;
+}
+
+/* Left panel */
+#mib-sidebar {
+    width: 260px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 8px 0 0 8px;
+    overflow: hidden;
+}
+#mib-sidebar-header {
+    padding: 0.65rem 0.75rem;
+    background: var(--bs-tertiary-bg);
+    border-bottom: 1px solid var(--bs-border-color);
+    flex-shrink: 0;
+}
+#module-list {
+    overflow-y: auto;
+    flex: 1;
+}
+.module-item {
+    padding: 0.45rem 0.75rem;
+    cursor: pointer;
+    border-bottom: 1px solid var(--bs-border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+    transition: background 0.1s;
+}
+.module-item:hover { background: var(--bs-tertiary-bg); }
+.module-item.active {
+    background: var(--bs-primary);
+    color: #fff;
+}
+.module-item.active .badge { background: rgba(255,255,255,.25) !important; color:#fff !important; }
+.module-item .mod-name {
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 175px;
+}
+.module-item .mod-count {
+    font-size: 0.7rem;
+    flex-shrink: 0;
+}
+
+/* Right panel */
+#mib-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--bs-border-color);
+    border-left: none;
+    border-radius: 0 8px 8px 0;
+    overflow: hidden;
+    min-width: 0;
+}
+#mib-main-header {
+    padding: 0.65rem 0.85rem;
+    background: var(--bs-tertiary-bg);
+    border-bottom: 1px solid var(--bs-border-color);
+    flex-shrink: 0;
+}
+#object-table-wrap {
+    overflow-y: auto;
+    flex: 1;
+}
+
+/* Object table */
+#object-table {
+    margin: 0;
+    font-size: 0.82rem;
+    table-layout: fixed;
+    width: 100%;
+}
+#object-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--bs-tertiary-bg);
+    z-index: 1;
+    padding: 0.45rem 0.6rem;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+}
+#object-table thead th:hover { opacity: 0.75; }
+#object-table td {
+    padding: 0.35rem 0.6rem;
+    vertical-align: middle;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#object-table tbody tr { cursor: pointer; }
+#object-table tbody tr:hover { background: var(--bs-tertiary-bg); }
+#object-table tbody tr.expanded { background: var(--bs-secondary-bg); }
+
+/* Column widths */
+#object-table .col-name  { width: 28%; }
+#object-table .col-type  { width: 16%; }
+#object-table .col-access{ width: 18%; }
+#object-table .col-syntax{ width: 20%; }
+#object-table .col-status{ width: 10%; }
+
+/* Expandable detail row */
+.detail-row td {
+    white-space: normal;
+    background: var(--bs-secondary-bg) !important;
+    font-size: 0.82rem;
+    padding: 0.6rem 0.85rem 0.75rem !important;
+}
+.detail-row .desc-text {
+    color: var(--bs-body-color);
+    line-height: 1.5;
+}
+.detail-row .parent-ref {
+    font-family: monospace;
+    font-size: 0.8rem;
+    color: var(--bs-secondary-color);
+}
+
+/* Welcome / empty states */
+#mib-welcome {
+    overflow-y: auto;
+    height: 100%;
+    padding: 1.5rem 2rem 2rem;
+}
+.welcome-section {
+    max-width: 760px;
+}
+.use-case-card {
+    border: 1px solid var(--bs-border-color);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    font-size: 0.83rem;
+}
+.use-case-card .uc-title {
+    font-weight: 600;
+    font-size: 0.82rem;
+    margin-bottom: 0.25rem;
+}
+.use-case-card .uc-mibs {
+    font-size: 0.72rem;
+    color: var(--bs-secondary-color);
+    font-family: monospace;
+}
+
+/* Search results panel */
+#search-results-panel { display: none; }
+
+/* Type badge colours */
+.badge-type-OBJECT-TYPE        { background: #0d6efd; color: #fff; }
+.badge-type-NOTIFICATION-TYPE  { background: #fd7e14; color: #fff; }
+.badge-type-TEXTUAL-CONVENTION { background: #0dcaf0; color: #000; }
+.badge-type-OBJECT-IDENTIFIER  { background: #6c757d; color: #fff; }
+.badge-type-MODULE-IDENTITY    { background: #343a40; color: #fff; }
+.badge-type-other              { background: #6c757d; color: #fff; }
+
+/* Access badge colours */
+.badge-access-read-only          { background: #0d6efd22; color: #0d6efd; border: 1px solid #0d6efd44; }
+.badge-access-read-write         { background: #19875422; color: #198754; border: 1px solid #19875444; }
+.badge-access-read-create        { background: #0dcaf022; color: #0aa2c0; border: 1px solid #0dcaf044; }
+.badge-access-not-accessible     { background: #6c757d22; color: #6c757d; border: 1px solid #6c757d44; }
+.badge-access-accessible-for-notify { background: #fd7e1422; color: #b55e08; border: 1px solid #fd7e1444; }
+[data-bs-theme="dark"] .badge-access-read-only   { color: #6ea8fe; border-color: #6ea8fe44; background: #6ea8fe18; }
+[data-bs-theme="dark"] .badge-access-read-write  { color: #75b798; border-color: #75b79844; background: #75b79818; }
+[data-bs-theme="dark"] .badge-access-read-create { color: #6edff6; border-color: #6edff644; background: #6edff618; }
+[data-bs-theme="dark"] .badge-access-not-accessible { color: #adb5bd; border-color: #adb5bd44; background: #adb5bd18; }
+[data-bs-theme="dark"] .badge-access-accessible-for-notify { color: #ffda6a; border-color: #ffda6a44; background: #ffda6a18; }
+
+/* Status text */
+.status-current    { color: #198754; }
+.status-deprecated { color: #ffc107; }
+.status-obsolete   { color: #dc3545; }
+[data-bs-theme="dark"] .status-current    { color: #75b798; }
+[data-bs-theme="dark"] .status-deprecated { color: #ffda6a; }
+[data-bs-theme="dark"] .status-obsolete   { color: #ea868f; }
+
+/* Global search results */
+.search-result-row { cursor: pointer; }
+.search-result-row:hover { background: var(--bs-tertiary-bg); }
+.search-mod-badge {
+    font-size: 0.68rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--bs-tertiary-bg);
+    border: 1px solid var(--bs-border-color);
+    white-space: nowrap;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Page header -->
+<div class="row mb-3">
+    <div class="col-12 d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div>
+            <h4 class="mb-0"><i class="bi bi-diagram-3"></i> MIB Browser</h4>
+            <small class="text-muted">
+                {{ stats.modules }} modules &middot;
+                {{ stats.objects }} objects
+                {% for t, c in stats.type_counts.items() %}
+                &middot; {{ c }} {{ t.replace('-TYPE','').replace('OBJECT-','OBJ-').lower() }}s
+                {% endfor %}
+            </small>
+        </div>
+        <!-- Global search -->
+        <div class="input-group" style="max-width:380px;">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" id="globalSearch" class="form-control"
+                   placeholder="Search all objects…" autocomplete="off">
+            <button class="btn btn-outline-secondary" id="clearSearch" style="display:none;" onclick="clearGlobalSearch()">
+                <i class="bi bi-x"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Main layout -->
+<div id="mib-layout">
+    <!-- Left: Module list -->
+    <div id="mib-sidebar">
+        <div id="mib-sidebar-header">
+            <input type="text" id="moduleFilter" class="form-control form-control-sm"
+                   placeholder="Filter modules…" oninput="filterModules(this.value)">
+        </div>
+        <div id="module-list">
+            <div class="text-center text-muted p-3">
+                <div class="spinner-border spinner-border-sm"></div> Loading…
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: Content -->
+    <div id="mib-main">
+        <!-- Header bar (hidden until a module is loaded) -->
+        <div id="mib-main-header" style="display:none;">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <strong id="module-title" class="me-1"></strong>
+                <span id="module-obj-count" class="badge bg-secondary"></span>
+                <div class="ms-auto d-flex align-items-center gap-2">
+                    <!-- Type filter -->
+                    <select id="typeFilter" class="form-select form-select-sm" style="width:auto;"
+                            onchange="applyFilters()">
+                        <option value="">All types</option>
+                        <option value="OBJECT-TYPE">OBJECT-TYPE</option>
+                        <option value="NOTIFICATION-TYPE">NOTIFICATION-TYPE</option>
+                        <option value="TEXTUAL-CONVENTION">TEXTUAL-CONVENTION</option>
+                        <option value="OBJECT-IDENTIFIER">OBJECT-IDENTIFIER</option>
+                    </select>
+                    <!-- Access filter -->
+                    <select id="accessFilter" class="form-select form-select-sm" style="width:auto;"
+                            onchange="applyFilters()">
+                        <option value="">All access</option>
+                        <option value="read-only">read-only</option>
+                        <option value="read-write">read-write</option>
+                        <option value="read-create">read-create</option>
+                        <option value="not-accessible">not-accessible</option>
+                        <option value="accessible-for-notify">accessible-for-notify</option>
+                    </select>
+                    <!-- Object search -->
+                    <input type="text" id="objectSearch" class="form-control form-control-sm"
+                           style="width:170px;" placeholder="Search objects…"
+                           oninput="applyFilters()">
+                </div>
+            </div>
+            <div id="module-description" class="text-muted mt-1" style="font-size:0.78rem;"></div>
+        </div>
+
+        <!-- Object table -->
+        <div id="object-table-wrap">
+            <!-- Welcome state -->
+            <div id="mib-welcome">
+              <div class="welcome-section">
+
+                <!-- Intro -->
+                <div class="d-flex align-items-center gap-3 mb-3">
+                    <i class="bi bi-diagram-3" style="font-size:2.8rem; opacity:0.35; flex-shrink:0;"></i>
+                    <div>
+                        <h5 class="mb-1">Arista MIB Browser</h5>
+                        <p class="text-muted mb-0" style="font-size:0.85rem;">
+                            Select a module from the left panel, or use the search box above to find objects across all {{ stats.modules }} modules.
+                        </p>
+                    </div>
+                </div>
+
+                <hr class="my-3">
+
+                <!-- What is a MIB -->
+                <h6 class="mb-2"><i class="bi bi-info-circle text-primary me-1"></i>What is a MIB?</h6>
+                <p style="font-size:0.84rem;" class="text-muted mb-3">
+                    A <strong>Management Information Base (MIB)</strong> is a formal database of managed objects on a network device.
+                    Each object has a unique numeric identifier called an <strong>OID</strong> (Object Identifier) and describes
+                    a single measurable value — such as an interface counter, a temperature reading, or a BGP session state.
+                    MIBs are written in <strong>SMIv2</strong> (ASN.1 notation) and are the foundation of the
+                    <strong>SNMP</strong> protocol, which network management systems use to query or configure devices.
+                </p>
+                <p style="font-size:0.84rem;" class="text-muted mb-3">
+                    Arista ships a set of vendor-specific MIBs that extend the standard IETF MIBs with EOS-specific
+                    data — hardware TCAM utilisation, gNMI connectivity monitoring, PFC watchdog counters, and more.
+                    Use this browser to explore those objects, understand what data each OID exposes, and identify
+                    the right OIDs before configuring an SNMP poller or writing a monitoring script.
+                </p>
+
+                <hr class="my-3">
+
+                <!-- How they're used -->
+                <h6 class="mb-3"><i class="bi bi-lightning text-warning me-1"></i>Common use cases</h6>
+                <div class="row g-2 mb-3">
+                    <div class="col-md-6">
+                        <div class="use-case-card">
+                            <div class="uc-title"><i class="bi bi-activity text-success me-1"></i>Real-time monitoring</div>
+                            <div class="mb-1" style="font-size:0.82rem;">Poll counters and gauges with tools like Prometheus SNMP Exporter, Zabbix, or LibreNMS to build dashboards and alerts.</div>
+                            <div class="uc-mibs">ARISTA-IF-MIB · ARISTA-ENTITY-SENSOR-MIB · ARISTA-HARDWARE-UTILIZATION-MIB</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="use-case-card">
+                            <div class="uc-title"><i class="bi bi-shield-check text-primary me-1"></i>Security &amp; ACL auditing</div>
+                            <div class="mb-1" style="font-size:0.82rem;">Read per-rule hit counters to verify which ACL entries are active and detect unexpected traffic patterns.</div>
+                            <div class="uc-mibs">ARISTA-ACL-MIB · ARISTA-IF-MIB (inAclDrops)</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="use-case-card">
+                            <div class="uc-title"><i class="bi bi-router text-info me-1"></i>Routing health</div>
+                            <div class="mb-1" style="font-size:0.82rem;">Track BGP session state, neighbour counts, and prefix advertisements for EVPN/IP fabric monitoring.</div>
+                            <div class="uc-mibs">ARISTA-BGP4V2-MIB · ARISTA-VRF-MIB</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="use-case-card">
+                            <div class="uc-title"><i class="bi bi-thermometer-half text-danger me-1"></i>Environmental alerts</div>
+                            <div class="mb-1" style="font-size:0.82rem;">Receive SNMP traps when a temperature sensor crosses a threshold or a fan enters a fault state.</div>
+                            <div class="uc-mibs">ARISTA-ENTITY-SENSOR-MIB · ARISTA-REDUNDANCY-MIB</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="use-case-card">
+                            <div class="uc-title"><i class="bi bi-bar-chart text-secondary me-1"></i>Capacity planning</div>
+                            <div class="mb-1" style="font-size:0.82rem;">Track high-water marks on TCAM, MAC tables, and ECMP groups before you hit hardware limits.</div>
+                            <div class="uc-mibs">ARISTA-HARDWARE-UTILIZATION-MIB · ARISTA-QUEUE-MIB</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="use-case-card">
+                            <div class="uc-title"><i class="bi bi-reception-4 text-warning me-1"></i>Optical &amp; PHY health</div>
+                            <div class="mb-1" style="font-size:0.82rem;">Monitor pre/post-FEC bit error rates and uncorrected codewords to catch degrading optics before they fail.</div>
+                            <div class="uc-mibs">ARISTA-PHY-MIB · ARISTA-XCVR-DWDM-MIB</div>
+                        </div>
+                    </div>
+                </div>
+
+                <hr class="my-3">
+
+                <!-- Object types legend -->
+                <h6 class="mb-2"><i class="bi bi-tag text-secondary me-1"></i>Object types in this browser</h6>
+                <div class="d-flex flex-wrap gap-2" style="font-size:0.8rem;">
+                    <div><span class="badge badge-type-OBJECT-TYPE">OBJ TYPE</span> &nbsp;A single manageable data point — counter, gauge, string, or table row.</div>
+                    <div><span class="badge badge-type-NOTIFICATION-TYPE">NOTIFICATION</span> &nbsp;An SNMP trap definition — sent by the device when an event occurs.</div>
+                    <div><span class="badge badge-type-TEXTUAL-CONVENTION">TEXTUAL-CONVENTION</span> &nbsp;A named type alias (e.g. InterfaceIndex, TruthValue) used across multiple objects.</div>
+                    <div><span class="badge badge-type-OBJECT-IDENTIFIER">OBJ IDENTIFIER</span> &nbsp;A structural node in the OID tree — not polled directly, used for namespacing.</div>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- Search results (shown during global search) -->
+            <div id="search-results-panel">
+                <table class="table table-sm table-hover mb-0" id="search-results-table">
+                    <thead>
+                        <tr>
+                            <th class="col-name">Name</th>
+                            <th style="width:22%;">Module</th>
+                            <th class="col-type">Type</th>
+                            <th class="col-access">Access</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody id="search-results-body"></tbody>
+                </table>
+            </div>
+
+            <!-- Module objects table -->
+            <table class="table table-sm table-hover mb-0" id="object-table" style="display:none;">
+                <thead>
+                    <tr>
+                        <th class="col-name" onclick="sortTable('name')">Name <i class="bi bi-chevron-expand" id="sort-name"></i></th>
+                        <th class="col-type" onclick="sortTable('type')">Type <i class="bi bi-chevron-expand" id="sort-type"></i></th>
+                        <th class="col-access" onclick="sortTable('access')">Access <i class="bi bi-chevron-expand" id="sort-access"></i></th>
+                        <th class="col-syntax" onclick="sortTable('syntax')">Syntax <i class="bi bi-chevron-expand" id="sort-syntax"></i></th>
+                        <th class="col-status" onclick="sortTable('status')">Status <i class="bi bi-chevron-expand" id="sort-status"></i></th>
+                    </tr>
+                </thead>
+                <tbody id="object-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+let allModules   = [];        // [{name, description, object_count, filename}]
+let currentObjs  = [];        // raw objects for the active module
+let filteredObjs = [];        // after type/access/text filter
+let expandedRows = new Set(); // obj names with expanded detail
+let sortCol      = 'name';
+let sortAsc      = true;
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+const typeBadge = t => {
+    const cls = ['OBJECT-TYPE','NOTIFICATION-TYPE','TEXTUAL-CONVENTION','OBJECT-IDENTIFIER','MODULE-IDENTITY'].includes(t)
+        ? 'badge-type-' + t : 'badge-type-other';
+    return `<span class="badge ${cls}" style="font-size:0.68rem;">${t.replace('-TYPE','').replace('OBJECT-','OBJ ')}</span>`;
+};
+
+const accessBadge = a => {
+    if (!a) return '';
+    const cls = 'badge-access-' + a;
+    return `<span class="badge ${cls}" style="font-size:0.68rem;">${a}</span>`;
+};
+
+const statusSpan = s => {
+    if (!s) return '';
+    const cls = s === 'current' ? 'status-current' : s === 'deprecated' ? 'status-deprecated' : s === 'obsolete' ? 'status-obsolete' : '';
+    return `<span class="${cls}">${s}</span>`;
+};
+
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// ── Module list ────────────────────────────────────────────────────────────────
+async function loadModuleList() {
+    const resp = await fetch('/api/mib/modules');
+    allModules = await resp.json();
+    renderModuleList(allModules);
+}
+
+function renderModuleList(modules) {
+    const el = document.getElementById('module-list');
+    if (!modules.length) {
+        el.innerHTML = '<div class="text-muted p-3 text-center small">No modules found</div>';
+        return;
+    }
+    el.innerHTML = modules.map(m => `
+        <div class="module-item" id="mod-item-${m.name}" onclick="selectModule('${m.name}')">
+            <span class="mod-name" title="${m.name}">${m.name.replace('ARISTA-','').replace('-MIB','')}</span>
+            <span class="badge bg-secondary mod-count">${m.object_count}</span>
+        </div>`).join('');
+}
+
+function filterModules(q) {
+    const filtered = q
+        ? allModules.filter(m => m.name.toLowerCase().includes(q.toLowerCase()))
+        : allModules;
+    renderModuleList(filtered);
+}
+
+// ── Module objects ─────────────────────────────────────────────────────────────
+async function selectModule(moduleName) {
+    // Mark active
+    document.querySelectorAll('.module-item').forEach(el => el.classList.remove('active'));
+    const item = document.getElementById('mod-item-' + moduleName);
+    if (item) item.classList.add('active');
+
+    // Hide global search results
+    hideGlobalSearch();
+
+    // Show loading
+    document.getElementById('mib-welcome').style.display = 'none';
+    document.getElementById('object-table').style.display = 'none';
+    document.getElementById('object-table-wrap').insertAdjacentHTML('afterbegin',
+        '<div id="load-spinner" class="text-center text-muted p-4"><div class="spinner-border spinner-border-sm"></div> Loading objects…</div>');
+
+    const resp = await fetch('/api/mib/module/' + encodeURIComponent(moduleName));
+    const data = await resp.json();
+
+    document.getElementById('load-spinner')?.remove();
+
+    currentObjs = data.objects || [];
+    expandedRows.clear();
+
+    // Update header
+    document.getElementById('mib-main-header').style.display = '';
+    document.getElementById('module-title').textContent = moduleName;
+    document.getElementById('module-obj-count').textContent = currentObjs.length + ' objects';
+    const desc = data.description || '';
+    const descEl = document.getElementById('module-description');
+    descEl.textContent = desc ? (desc.length > 200 ? desc.slice(0,200) + '…' : desc) : '';
+    descEl.style.display = desc ? '' : 'none';
+
+    // Reset filters
+    document.getElementById('typeFilter').value   = '';
+    document.getElementById('accessFilter').value = '';
+    document.getElementById('objectSearch').value = '';
+    sortCol = 'name';
+    sortAsc = true;
+
+    applyFilters();
+    document.getElementById('object-table').style.display = '';
+}
+
+function applyFilters() {
+    const typeVal   = document.getElementById('typeFilter').value;
+    const accessVal = document.getElementById('accessFilter').value;
+    const textVal   = document.getElementById('objectSearch').value.toLowerCase();
+
+    filteredObjs = currentObjs.filter(o => {
+        if (typeVal   && o.type   !== typeVal)   return false;
+        if (accessVal && o.access !== accessVal) return false;
+        if (textVal && !o.name.toLowerCase().includes(textVal) &&
+                       !o.description.toLowerCase().includes(textVal)) return false;
+        return true;
+    });
+
+    sortObjects();
+    renderObjects();
+
+    document.getElementById('module-obj-count').textContent =
+        filteredObjs.length + (filteredObjs.length !== currentObjs.length ? ` / ${currentObjs.length}` : '') + ' objects';
+}
+
+function sortObjects() {
+    filteredObjs.sort((a, b) => {
+        const va = (a[sortCol] || '').toLowerCase();
+        const vb = (b[sortCol] || '').toLowerCase();
+        return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    });
+}
+
+function sortTable(col) {
+    if (sortCol === col) { sortAsc = !sortAsc; }
+    else { sortCol = col; sortAsc = true; }
+
+    ['name','type','access','syntax','status'].forEach(c => {
+        const el = document.getElementById('sort-' + c);
+        if (!el) return;
+        el.className = c === col
+            ? ('bi bi-chevron-' + (sortAsc ? 'up' : 'down'))
+            : 'bi bi-chevron-expand';
+    });
+
+    sortObjects();
+    renderObjects();
+}
+
+function renderObjects() {
+    const tbody = document.getElementById('object-tbody');
+    if (!filteredObjs.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted p-3">No objects match the current filters</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = filteredObjs.map(o => {
+        const rowId = 'row-' + o.name;
+        const expanded = expandedRows.has(o.name);
+        const detailRow = expanded ? `
+            <tr class="detail-row" id="detail-${o.name}">
+                <td colspan="5">
+                    ${o.description
+                        ? `<div class="desc-text mb-1">${esc(o.description)}</div>`
+                        : '<span class="text-muted fst-italic">No description available.</span>'}
+                    ${o.parent_ref
+                        ? `<div class="parent-ref mt-1"><i class="bi bi-diagram-2 me-1"></i>::= { ${esc(o.parent_ref)} }</div>`
+                        : ''}
+                </td>
+            </tr>` : '';
+        return `
+            <tr id="${rowId}" class="${expanded ? 'expanded' : ''}" onclick="toggleDetail('${o.name}')">
+                <td class="col-name" title="${esc(o.name)}">
+                    <i class="bi bi-chevron-${expanded ? 'down' : 'right'} text-muted me-1" style="font-size:0.7rem;"></i>
+                    <code style="font-size:0.8rem;">${esc(o.name)}</code>
+                </td>
+                <td class="col-type">${typeBadge(o.type)}</td>
+                <td class="col-access">${accessBadge(o.access)}</td>
+                <td class="col-syntax" title="${esc(o.syntax)}" style="font-size:0.78rem;font-family:monospace;">${esc(o.syntax)}</td>
+                <td class="col-status">${statusSpan(o.status)}</td>
+            </tr>${detailRow}`;
+    }).join('');
+}
+
+function toggleDetail(objName) {
+    if (expandedRows.has(objName)) {
+        expandedRows.delete(objName);
+    } else {
+        expandedRows.add(objName);
+    }
+    renderObjects();
+    // Scroll expanded row into view
+    if (expandedRows.has(objName)) {
+        document.getElementById('row-' + objName)?.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+// ── Global search ──────────────────────────────────────────────────────────────
+let searchTimer = null;
+
+document.getElementById('globalSearch').addEventListener('input', function() {
+    clearTimeout(searchTimer);
+    const q = this.value.trim();
+    document.getElementById('clearSearch').style.display = q ? '' : 'none';
+    if (!q) { clearGlobalSearch(); return; }
+    searchTimer = setTimeout(() => runGlobalSearch(q), 280);
+});
+
+async function runGlobalSearch(q) {
+    // Hide module table, show search results
+    document.getElementById('mib-welcome').style.display = 'none';
+    document.getElementById('object-table').style.display = 'none';
+    document.getElementById('mib-main-header').style.display = 'none';
+
+    const panel = document.getElementById('search-results-panel');
+    panel.style.display = '';
+    document.getElementById('search-results-body').innerHTML =
+        '<tr><td colspan="5" class="text-center p-3"><div class="spinner-border spinner-border-sm"></div> Searching…</td></tr>';
+
+    const resp = await fetch('/api/mib/search?q=' + encodeURIComponent(q));
+    const results = await resp.json();
+
+    const tbody = document.getElementById('search-results-body');
+    if (!results.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted p-3">No objects found matching <strong>' + esc(q) + '</strong></td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = results.map(r => `
+        <tr class="search-result-row" onclick="selectModuleAndScroll('${r.module}', '${r.name}')">
+            <td><code style="font-size:0.8rem;">${esc(r.name)}</code></td>
+            <td><span class="search-mod-badge">${r.module.replace('ARISTA-','').replace('-MIB','')}</span></td>
+            <td>${typeBadge(r.type)}</td>
+            <td>${accessBadge(r.access)}</td>
+            <td style="font-size:0.78rem;" class="text-truncate" title="${esc(r.description)}">${esc(r.description.slice(0,120))}${r.description.length > 120 ? '…' : ''}</td>
+        </tr>`).join('');
+}
+
+function clearGlobalSearch() {
+    document.getElementById('globalSearch').value = '';
+    document.getElementById('clearSearch').style.display = 'none';
+    document.getElementById('search-results-panel').style.display = 'none';
+    // Restore whatever was showing
+    if (currentObjs.length) {
+        document.getElementById('mib-main-header').style.display = '';
+        document.getElementById('object-table').style.display = '';
+    } else {
+        document.getElementById('mib-welcome').style.display = '';
+    }
+}
+
+async function selectModuleAndScroll(moduleName, objName) {
+    clearGlobalSearch();
+    await selectModule(moduleName);
+    // Expand the matching row
+    expandedRows.add(objName);
+    renderObjects();
+    setTimeout(() => document.getElementById('row-' + objName)?.scrollIntoView({ block: 'center' }), 50);
+}
+
+function hideGlobalSearch() {
+    document.getElementById('globalSearch').value = '';
+    document.getElementById('clearSearch').style.display = 'none';
+    document.getElementById('search-results-panel').style.display = 'none';
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', loadModuleList);
+</script>
+{% endblock %}

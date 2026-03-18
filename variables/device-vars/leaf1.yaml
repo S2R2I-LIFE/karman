@@ -1,0 +1,148 @@
+# Device Variables for leaf1-dc1
+hostname: leaf1-dc1
+domain_name: datacenter.local
+
+dns_servers:
+  - ip: 8.8.8.8
+    vrf: management
+  - ip: 8.8.4.4
+    vrf: management
+
+ntp_servers:
+  - ip: 10.0.0.1
+    vrf: management
+    prefer: true
+
+logging_servers:
+  - ip: 10.0.0.10
+    protocol: udp
+    port: 514
+
+local_users:
+  - name: admin
+    privilege: 15
+    role: network-admin
+    password_hash: $6$7u4j1ij2gg.wE.q7$E4cXxyMwN3TiN5V5/h8gjnLmJlSMEhR.MYE5sM.4E1N6xX3DK5zK8a6I8/Zw5tF8k7R1
+
+# MLAG Configuration
+mlag:
+  enabled: true
+  domain_id: MLAG_LEAF1_LEAF2
+  peer_vlan: 4094
+  peer_link_po: 2000
+  peer_link_interfaces:
+    - Ethernet1
+    - Ethernet2
+  local_ip: 10.255.252.0
+  peer_ip: 10.255.252.1
+  peer_subnet_mask: 31
+  reload_delay:
+    mlag: 300
+    non_mlag: 330
+
+# VLANs
+vlans:
+  - id: 10
+    name: VLAN10
+    state: active
+  - id: 20
+    name: VLAN20
+    state: active
+  - id: 30
+    name: VLAN30
+    state: active
+
+# Interfaces
+interfaces:
+  - name: Ethernet3
+    description: "Server Port - srv01"
+    mode: access
+    vlan: 10
+    spanning_tree_portfast: true
+    enabled: true
+  - name: Ethernet4
+    description: "Server Port - srv02"
+    mode: access
+    vlan: 20
+    spanning_tree_portfast: true
+    enabled: true
+  - name: Ethernet10
+    description: "Uplink to Spine1"
+    mode: routed
+    ip_address: 10.1.1.1/31
+    enabled: true
+  - name: Ethernet11
+    description: "Uplink to Spine2"
+    mode: routed
+    ip_address: 10.1.2.1/31
+    enabled: true
+
+# BGP Configuration
+bgp:
+  asn: 65001
+  router_id: 10.0.1.1
+  max_paths: 4
+  ecmp_paths: 4
+  peer_groups:
+    - name: SPINE-PEERS
+      send_community: true
+      maximum_routes: 12000
+  neighbors:
+    - ip: 10.1.1.0
+      remote_asn: 65100
+      description: "spine1"
+      peer_group: SPINE-PEERS
+    - ip: 10.1.2.0
+      remote_asn: 65100
+      description: "spine2"
+      peer_group: SPINE-PEERS
+  networks:
+    - 10.0.1.1/32
+
+# VXLAN Configuration
+vxlan:
+  source_interface: Loopback1
+  udp_port: 4789
+  vlan_to_vni_maps:
+    - vlan: 10
+      vni: 10010
+    - vlan: 20
+      vni: 10020
+    - vlan: 30
+      vni: 10030
+
+# Spanning Tree
+spanning_tree:
+  mode: mstp
+  priority: 16384
+
+# Loopback Interfaces
+loopback_interfaces:
+  - name: Loopback0
+    description: "Router ID"
+    ip_address: 10.0.1.1/32
+  - name: Loopback1
+    description: "VTEP Source"
+    ip_address: 10.0.1.1/32
+
+# Static Routes
+static_routes:
+  - destination: 0.0.0.0/0
+    next_hop: 10.0.0.1
+    vrf: management
+    name: "Default Route Management"
+
+# EVPN Configuration
+evpn:
+  asn: 65001
+  peers:
+    - ip: 10.0.100.1
+      remote_asn: 65100
+      update_source: Loopback0
+      multihop: 3
+      description: "spine1-evpn"
+    - ip: 10.0.100.2
+      remote_asn: 65100
+      update_source: Loopback0
+      multihop: 3
+      description: "spine2-evpn"

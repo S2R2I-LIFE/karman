@@ -1,0 +1,566 @@
+{% extends "base.html" %}
+
+{% block title %}Network Topology - {{ app_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    #topology-wrap {
+        display: flex;
+        gap: 0;
+        height: clamp(500px, calc(100vh - 340px), 720px);
+    }
+
+    #topology-container {
+        flex: 1;
+        min-width: 0;
+        border: 1px solid #dee2e6;
+        border-radius: 8px 0 0 8px;
+        background: #ffffff;
+        transition: border-radius 0.2s;
+    }
+    #topology-container.panel-open {
+        border-radius: 8px 0 0 8px;
+    }
+
+    /* Node info side panel */
+    #node-panel {
+        width: 0;
+        overflow: hidden;
+        transition: width 0.2s ease;
+        border: 1px solid #dee2e6;
+        border-left: none;
+        border-radius: 0 8px 8px 0;
+        background: var(--bs-body-bg);
+        display: flex;
+        flex-direction: column;
+    }
+    #node-panel.open {
+        width: 280px;
+    }
+    #node-panel-inner {
+        padding: 16px;
+        width: 280px;
+        overflow-y: auto;
+        flex: 1;
+    }
+    #node-panel-inner h6 {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--bs-secondary-color);
+        margin-bottom: 6px;
+        margin-top: 14px;
+    }
+    #node-panel-inner h6:first-child { margin-top: 0; }
+    #node-panel-inner .val {
+        font-size: 0.92rem;
+        font-weight: 500;
+        word-break: break-all;
+    }
+    .role-dot {
+        display: inline-block;
+        width: 10px; height: 10px;
+        border-radius: 50%;
+        margin-right: 6px;
+        vertical-align: middle;
+    }
+
+    .topology-stats {
+        background: var(--bs-tertiary-bg);
+        padding: 12px 16px;
+        border-radius: 8px;
+        margin-bottom: 16px;
+    }
+    .stat-item { display: inline-block; margin-right: 24px; }
+    .stat-label { font-weight: 600; color: var(--bs-secondary-color); font-size: 0.85rem; }
+    .stat-value { font-size: 1.4em; color: #0d6efd; margin-left: 6px; }
+
+    .legend-color {
+        display: inline-block;
+        width: 14px; height: 14px;
+        border-radius: 50%;
+        margin-right: 5px;
+        vertical-align: middle;
+    }
+    .legend-item { display: inline-block; margin-right: 14px; margin-bottom: 4px; font-size: 0.875rem; }
+
+    [data-bs-theme="dark"] #topology-container {
+        background: #0d1117 !important;
+        border-color: #30363d !important;
+    }
+    [data-bs-theme="dark"] #node-panel {
+        border-color: #30363d !important;
+    }
+    [data-bs-theme="dark"] .stat-value { color: #58a6ff; }
+
+    /* Fix vis.js tooltip in dark mode */
+    [data-bs-theme="dark"] .vis-tooltip {
+        background-color: #1c2128 !important;
+        color: #e6edf3 !important;
+        border-color: #30363d !important;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.6) !important;
+    }
+
+    .lldp-source-badge {
+        font-size: 0.72rem;
+        padding: 2px 7px;
+        border-radius: 10px;
+        font-weight: 600;
+    }
+    .lldp-src-gnmi       { background: #0d6efd22; color: #0d6efd; border: 1px solid #0d6efd55; }
+    .lldp-src-eapi       { background: #19875422; color: #198754; border: 1px solid #19875455; }
+    .lldp-src-eapi_fallback { background: #fd7e1422; color: #fd7e14; border: 1px solid #fd7e1455; }
+    .lldp-src-ssh        { background: #6f42c122; color: #6f42c1; border: 1px solid #6f42c155; }
+    .lldp-src-none, .lldp-src-eapi_empty, .lldp-src-ssh_empty,
+    .lldp-src-eapi_fallback_empty { background: #6c757d22; color: #6c757d; border: 1px solid #6c757d55; }
+    .lldp-src-error      { background: #dc354522; color: #dc3545; border: 1px solid #dc354555; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col-12 d-flex justify-content-between align-items-center">
+        <h2 class="mb-0"><i class="bi bi-diagram-3"></i> Network Topology</h2>
+        <div class="d-flex gap-2">
+            <button class="btn btn-primary" id="discoverBtn">
+                <i class="bi bi-arrow-repeat"></i> Discover Topology
+            </button>
+            <button class="btn btn-outline-secondary" id="fitBtn">
+                <i class="bi bi-arrows-fullscreen"></i> Fit
+            </button>
+            <button class="btn btn-outline-secondary" id="exportBtn">
+                <i class="bi bi-download"></i> Export
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Stats bar -->
+<div id="statsRow" style="display:none;">
+    <div class="topology-stats">
+        <span class="stat-item">
+            <span class="stat-label">Devices</span>
+            <span class="stat-value" id="statDevices">0</span>
+        </span>
+        <span class="stat-item">
+            <span class="stat-label">Links</span>
+            <span class="stat-value" id="statLinks">0</span>
+        </span>
+        <span class="stat-item">
+            <span class="stat-label">Discovered</span>
+            <span class="stat-value" id="statTime" style="font-size:1rem; vertical-align: middle;">—</span>
+        </span>
+    </div>
+</div>
+
+<!-- Legend -->
+<div id="legendRow" style="display:none;" class="mb-3">
+    <div class="d-flex flex-wrap gap-1 align-items-center">
+        <span class="legend-item"><span class="legend-color" style="background:#4a90e2"></span>Spine</span>
+        <span class="legend-item"><span class="legend-color" style="background:#50c878"></span>Leaf</span>
+        <span class="legend-item"><span class="legend-color" style="background:#f5a623"></span>Border</span>
+        <span class="legend-item"><span class="legend-color" style="background:#9b59b6"></span>Core</span>
+        <span class="legend-item"><span class="legend-color" style="background:#e74c3c"></span>Access</span>
+        <span class="legend-item"><span class="legend-color" style="background:#95a5a6"></span>Unknown</span>
+        <span class="ms-3 text-muted" style="font-size:0.8rem;"><i class="bi bi-info-circle"></i> Click a node to inspect &nbsp;·&nbsp; Double-click to open device page</span>
+    </div>
+</div>
+
+<!-- Graph + side panel -->
+<div class="card mb-3">
+    <div class="card-body p-0">
+        <div id="topology-wrap">
+            <div id="topology-container"></div>
+            <div id="node-panel">
+                <div id="node-panel-inner">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <strong id="panel-hostname" style="font-size:1rem;">—</strong>
+                        <button class="btn btn-sm btn-link p-0 text-muted" id="panelCloseBtn" title="Close">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+                    <h6>Role</h6>
+                    <div class="val"><span class="role-dot" id="panel-role-dot"></span><span id="panel-role">—</span></div>
+                    <h6>IP Address</h6>
+                    <div class="val" id="panel-ip">—</div>
+                    <h6>Model</h6>
+                    <div class="val" id="panel-model">—</div>
+                    <h6>Management</h6>
+                    <div class="val" id="panel-mgmt">—</div>
+                    <div class="mt-3">
+                        <a id="panel-device-link" href="#" class="btn btn-sm btn-primary w-100">
+                            <i class="bi bi-hdd-network"></i> Open Device Page
+                        </a>
+                    </div>
+                    <hr>
+                    <h6>Connected to</h6>
+                    <div id="panel-neighbors" class="text-muted" style="font-size:0.85rem;">—</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Link table -->
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-list-ul"></i> Link Details</h5>
+        <span id="linkCount" class="badge bg-secondary">0 links</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0" id="linkTable">
+                <thead>
+                    <tr>
+                        <th>Device A</th>
+                        <th>Interface A</th>
+                        <th class="text-center">↔</th>
+                        <th>Interface B</th>
+                        <th>Device B</th>
+                    </tr>
+                </thead>
+                <tbody id="linkTableBody">
+                    <tr>
+                        <td colspan="5" class="text-center text-muted py-3">
+                            Click <strong>Discover Topology</strong> to load LLDP links
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- LLDP Discovery Status (collapsible) -->
+<div class="card" id="lldpStatusCard" style="display:none;">
+    <div class="card-header d-flex justify-content-between align-items-center"
+         style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#lldpStatusBody">
+        <h6 class="mb-0 text-muted"><i class="bi bi-info-circle"></i> LLDP Discovery Status</h6>
+        <i class="bi bi-chevron-down text-muted" id="lldpStatusChevron"></i>
+    </div>
+    <div class="collapse" id="lldpStatusBody">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm mb-0" id="lldpStatusTable">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Device</th>
+                            <th>LLDP Source</th>
+                            <th class="text-center">Neighbors</th>
+                            <th>Note</th>
+                        </tr>
+                    </thead>
+                    <tbody id="lldpStatusBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<script>
+(function () {
+'use strict';
+
+let network      = null;
+let topologyData = null;  // full response from /api/topology/discover
+
+const roleColors = {
+    spine:   '#4a90e2',
+    leaf:    '#50c878',
+    border:  '#f5a623',
+    core:    '#9b59b6',
+    access:  '#e74c3c',
+    unknown: '#95a5a6',
+};
+
+// ── vis.js options (dark-mode aware) ────────────────────────────────────────
+function isDark() {
+    return document.documentElement.getAttribute('data-bs-theme') === 'dark';
+}
+
+function getVisOptions() {
+    const dark = isDark();
+    return {
+        nodes: {
+            shape: 'box',
+            size: 25,
+            font: { size: 13, face: 'monospace', color: '#ffffff' },
+            borderWidth: 2,
+            shadow: dark ? { color: 'rgba(0,0,0,0.5)', size: 8 } : true,
+        },
+        edges: {
+            width: 2,
+            color: {
+                color:     dark ? '#4a5568' : '#848484',
+                highlight: '#0d6efd',
+                hover:     dark ? '#58a6ff' : '#0d6efd',
+            },
+            smooth: { type: 'continuous' },
+            font: {
+                size:        10,
+                align:       'middle',
+                color:       dark ? '#8b949e' : '#555555',
+                background:  dark ? '#0d1117'  : '#ffffff',
+                strokeWidth: 0,
+            },
+            arrows: { to: false },
+        },
+        physics: {
+            enabled: true,
+            barnesHut: {
+                gravitationalConstant: -8000,
+                centralGravity: 0.3,
+                springLength: 200,
+                springConstant: 0.04,
+                damping: 0.09,
+                avoidOverlap: 0.1,
+            },
+            stabilization: { iterations: 200 },
+        },
+        interaction: { hover: true, tooltipDelay: 150 },
+    };
+}
+
+// ── vis.js init ─────────────────────────────────────────────────────────────
+function initTopology() {
+    const container = document.getElementById('topology-container');
+
+    network = new vis.Network(container, { nodes: new vis.DataSet([]), edges: new vis.DataSet([]) }, getVisOptions());
+
+    network.on('stabilizationIterationsDone', () => network.setOptions({ physics: false }));
+
+    network.on('selectNode', params => {
+        if (params.nodes.length > 0) showNodePanel(params.nodes[0]);
+    });
+    network.on('deselectNode', () => closePanel());
+
+    network.on('doubleClick', params => {
+        if (params.nodes.length > 0) {
+            const node = topologyData && topologyData.topology.nodes.find(n => n.id === params.nodes[0]);
+            if (node) window.location.href = '/devices/' + encodeURIComponent(node.id);
+        }
+    });
+
+    // Re-apply vis options when user toggles dark/light mode
+    new MutationObserver(() => {
+        if (network) network.setOptions(getVisOptions());
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-bs-theme'] });
+}
+
+// ── discover ─────────────────────────────────────────────────────────────────
+function discoverTopology() {
+    const btn = document.getElementById('discoverBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Discovering…';
+
+    fetch('/api/topology/discover')
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                topologyData = data;
+                renderTopology(data.topology);
+                updateStats(data.stats);
+                updateLinkTable(data.topology.links);
+                updateLldpStatus(data.device_status || []);
+                document.getElementById('statsRow').style.display = '';
+                document.getElementById('legendRow').style.display = '';
+            } else {
+                alert('Topology discovery failed: ' + (data.error || 'unknown error'));
+            }
+        })
+        .catch(err => alert('Topology discovery failed: ' + err))
+        .finally(() => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Discover Topology';
+        });
+}
+
+// ── render ───────────────────────────────────────────────────────────────────
+function renderTopology(topology) {
+    const nodes = topology.nodes.map(node => {
+        const role  = (node.role || 'unknown').toLowerCase();
+        const color = roleColors[role] || roleColors.unknown;
+        return {
+            id:    node.id,
+            label: node.label,
+            title: `${node.label}\nRole: ${node.role}\nIP: ${node.ip}`,
+            color: {
+                background: color,
+                border: darken(color),
+                highlight: { background: color, border: '#e74c3c' },
+                hover:      { background: color, border: '#0d6efd' },
+            },
+            font: { color: '#fff' },
+        };
+    });
+
+    const edges = topology.links.map(link => ({
+        id:    link.id,
+        from:  link.from,
+        to:    link.to,
+        label: `${link.from_interface} ↔ ${link.to_interface}`,
+        title: `${link.from}:${link.from_interface} ↔ ${link.to}:${link.to_interface}`,
+    }));
+
+    network.setData({ nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) });
+}
+
+function darken(hex) {
+    // Simple 20% darkening for border color
+    let r = parseInt(hex.slice(1,3),16);
+    let g = parseInt(hex.slice(3,5),16);
+    let b = parseInt(hex.slice(5,7),16);
+    r = Math.max(0, r - 40); g = Math.max(0, g - 40); b = Math.max(0, b - 40);
+    return '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('');
+}
+
+// ── stats + link table ───────────────────────────────────────────────────────
+function updateStats(stats) {
+    document.getElementById('statDevices').textContent = stats.total_nodes;
+    document.getElementById('statLinks').textContent   = stats.total_links;
+    document.getElementById('statTime').textContent    = new Date().toLocaleTimeString();
+}
+
+function updateLinkTable(links) {
+    const tbody = document.getElementById('linkTableBody');
+    document.getElementById('linkCount').textContent = links.length + ' link' + (links.length !== 1 ? 's' : '');
+
+    if (!links.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No LLDP links discovered — check that LLDP is enabled on devices</td></tr>';
+        return;
+    }
+    tbody.innerHTML = links.map(link => `
+        <tr style="cursor:pointer;" onclick="highlightLink('${link.id}')">
+            <td><strong>${link.from}</strong></td>
+            <td><code>${link.from_interface}</code></td>
+            <td class="text-center text-muted">↔</td>
+            <td><code>${link.to_interface}</code></td>
+            <td><strong>${link.to}</strong></td>
+        </tr>`).join('');
+}
+
+function highlightLink(linkId) {
+    if (network) network.selectEdges([linkId]);
+}
+
+// ── LLDP discovery status ─────────────────────────────────────────────────────
+const lldpSourceLabel = {
+    gnmi:              { label: 'gNMI (OpenConfig)',    cls: 'lldp-src-gnmi'  },
+    eapi:              { label: 'eAPI',                 cls: 'lldp-src-eapi'  },
+    ssh:               { label: 'SSH',                  cls: 'lldp-src-ssh'   },
+    ssh_fallback:      { label: 'SSH fallback',         cls: 'lldp-src-eapi_fallback' },
+    eapi_empty:        { label: 'eAPI (no neighbors)',  cls: 'lldp-src-eapi_empty' },
+    ssh_empty:         { label: 'SSH (no neighbors)',   cls: 'lldp-src-ssh_empty' },
+    ssh_fallback_empty:{ label: 'SSH fallback (0 neighbors)', cls: 'lldp-src-eapi_fallback_empty' },
+    none:              { label: 'No data',              cls: 'lldp-src-none'  },
+    error:             { label: 'Error',                cls: 'lldp-src-error' },
+};
+
+function updateLldpStatus(statuses) {
+    const card = document.getElementById('lldpStatusCard');
+    const tbody = document.getElementById('lldpStatusBody');
+    if (!statuses.length) { card.style.display = 'none'; return; }
+
+    card.style.display = '';
+    tbody.innerHTML = statuses.map(s => {
+        const src = lldpSourceLabel[s.lldp_source] || { label: s.lldp_source, cls: 'lldp-src-none' };
+        const countBadge = s.neighbor_count > 0
+            ? `<span class="badge bg-success">${s.neighbor_count}</span>`
+            : `<span class="badge bg-secondary">0</span>`;
+        const note = s.error
+            ? `<small class="text-danger">${s.error.replace(/^;\s*/, '')}</small>`
+            : '';
+        return `<tr>
+            <td><strong>${s.hostname}</strong></td>
+            <td><span class="lldp-source-badge ${src.cls}">${src.label}</span></td>
+            <td class="text-center">${countBadge}</td>
+            <td>${note}</td>
+        </tr>`;
+    }).join('');
+
+    // Rotate chevron when collapsed/expanded
+    const collapseEl = document.getElementById('lldpStatusBody');
+    const chevron    = document.getElementById('lldpStatusChevron');
+    collapseEl.addEventListener('show.bs.collapse',  () => chevron.classList.replace('bi-chevron-down', 'bi-chevron-up'));
+    collapseEl.addEventListener('hide.bs.collapse',  () => chevron.classList.replace('bi-chevron-up',   'bi-chevron-down'));
+}
+
+// ── node info panel ──────────────────────────────────────────────────────────
+function showNodePanel(nodeId) {
+    if (!topologyData) return;
+    const node = topologyData.topology.nodes.find(n => n.id === nodeId);
+    if (!node) return;
+
+    const role  = (node.role || 'unknown').toLowerCase();
+    const color = roleColors[role] || roleColors.unknown;
+
+    document.getElementById('panel-hostname').textContent = node.label;
+    document.getElementById('panel-role').textContent     = node.role || 'Unknown';
+    document.getElementById('panel-role-dot').style.background = color;
+    document.getElementById('panel-ip').textContent       = node.ip   || '—';
+    document.getElementById('panel-model').textContent    = node.model || '—';
+    document.getElementById('panel-mgmt').textContent     = node.management_type || '—';
+
+    const link = document.getElementById('panel-device-link');
+    link.href = '/devices/' + encodeURIComponent(node.id);
+
+    // Neighbors
+    const links = topologyData.topology.links.filter(
+        l => l.from === nodeId || l.to === nodeId
+    );
+    const neighborsDiv = document.getElementById('panel-neighbors');
+    if (links.length === 0) {
+        neighborsDiv.innerHTML = '<span class="text-muted">No LLDP links</span>';
+    } else {
+        neighborsDiv.innerHTML = links.map(l => {
+            const peer  = l.from === nodeId ? l.to : l.from;
+            const myInt = l.from === nodeId ? l.from_interface : l.to_interface;
+            const pInt  = l.from === nodeId ? l.to_interface   : l.from_interface;
+            return `<div class="mb-1"><code>${myInt}</code> → <strong>${peer}</strong> <code>${pInt}</code></div>`;
+        }).join('');
+    }
+
+    document.getElementById('node-panel').classList.add('open');
+    document.getElementById('topology-container').classList.add('panel-open');
+}
+
+function closePanel() {
+    document.getElementById('node-panel').classList.remove('open');
+    document.getElementById('topology-container').classList.remove('panel-open');
+}
+
+// ── fit / export ─────────────────────────────────────────────────────────────
+function fitToScreen() {
+    if (network) network.fit({ animation: { duration: 800, easingFunction: 'easeInOutQuad' } });
+}
+
+function exportTopology() {
+    const canvas = document.querySelector('#topology-container canvas');
+    if (!canvas) { alert('No topology to export'); return; }
+    canvas.toBlob(blob => {
+        const a = Object.assign(document.createElement('a'), {
+            href:     URL.createObjectURL(blob),
+            download: `topology_${new Date().toISOString().split('T')[0]}.png`,
+        });
+        a.click();
+        URL.revokeObjectURL(a.href);
+    });
+}
+
+// ── event wiring ─────────────────────────────────────────────────────────────
+document.getElementById('discoverBtn').addEventListener('click', discoverTopology);
+document.getElementById('fitBtn').addEventListener('click', fitToScreen);
+document.getElementById('exportBtn').addEventListener('click', exportTopology);
+document.getElementById('panelCloseBtn').addEventListener('click', () => {
+    closePanel();
+    if (network) network.unselectAll();
+});
+
+document.addEventListener('DOMContentLoaded', initTopology);
+
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Device - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('devices') }}">Devices</a></li>
+                <li class="breadcrumb-item active">Edit {{ device.hostname }}</li>
+            </ol>
+        </nav>
+
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0"><i class="bi bi-pencil"></i> Edit Device: {{ device.hostname }}</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="hostname" class="form-label">Hostname *</label>
+                            <input type="text" class="form-control" id="hostname" name="hostname"
+                                   value="{{ device.hostname }}" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="ip_address" class="form-label">IP Address *</label>
+                            <input type="text" class="form-control" id="ip_address" name="ip_address"
+                                   value="{{ device.ip_address }}" required>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="role" class="form-label">Role *</label>
+                            <select class="form-select" id="role" name="role" required>
+                                <option value="">Select Role...</option>
+                                <option value="spine" {% if device.role.value == 'spine' %}selected{% endif %}>Spine</option>
+                                <option value="leaf" {% if device.role.value == 'leaf' %}selected{% endif %}>Leaf</option>
+                                <option value="border" {% if device.role.value == 'border' %}selected{% endif %}>Border</option>
+                                <option value="core" {% if device.role.value == 'core' %}selected{% endif %}>Core</option>
+                                <option value="access" {% if device.role.value == 'access' %}selected{% endif %}>Access</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="site" class="form-label">Site *</label>
+                            <input type="text" class="form-control" id="site" name="site"
+                                   value="{{ device.site }}" required>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="model" class="form-label">Model</label>
+                            <input type="text" class="form-control" id="model" name="model"
+                                   value="{{ device.model }}" placeholder="e.g., DCS-7050SX-128">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="serial_number" class="form-label">Serial Number</label>
+                            <input type="text" class="form-control" id="serial_number" name="serial_number"
+                                   value="{{ device.serial_number }}">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="eos_version" class="form-label">EOS Version</label>
+                            <input type="text" class="form-control" id="eos_version" name="eos_version"
+                                   value="{{ device.eos_version }}" placeholder="e.g., 4.27.3F">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="container" class="form-label">Container</label>
+                            <input type="text" class="form-control" id="container" name="container"
+                                   value="{{ device.container }}">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="management_type" class="form-label">Management Type *</label>
+                            <select class="form-select" id="management_type" name="management_type" required>
+                                <option value="eapi" {% if device.management_type.value == 'eapi' %}selected{% endif %}>eAPI (HTTPS)</option>
+                                <option value="ssh" {% if device.management_type.value == 'ssh' %}selected{% endif %}>SSH</option>
+                                <option value="gnmi" {% if device.management_type.value == 'gnmi' %}selected{% endif %}>gNMI / TerminAttr</option>
+                                <option value="cvp" {% if device.management_type.value == 'cvp' %}selected{% endif %}>CVP</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <div class="form-check mt-4">
+                                <input class="form-check-input" type="checkbox" id="cvp_managed" name="cvp_managed"
+                                       {% if device.cvp_managed %}checked{% endif %}>
+                                <label class="form-check-label" for="cvp_managed">
+                                    CVP Managed Device
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row" id="gnmi_port_row">
+                        <div class="col-md-4 mb-3">
+                            <label for="gnmi_port" class="form-label">gNMI Port</label>
+                            <input type="number" class="form-control" id="gnmi_port" name="gnmi_port"
+                                   value="{{ device.gnmi_port }}" min="1" max="65535">
+                            <div class="form-text">TerminAttr default is 6030. Native EOS gNMI also uses 6030.</div>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <a href="{{ url_for('devices') }}" class="btn btn-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-save"></i> Save Changes
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const sel = document.getElementById('management_type');
+    const row = document.getElementById('gnmi_port_row');
+    function toggle() { row.style.display = sel.value === 'gnmi' ? '' : 'none'; }
+    sel.addEventListener('change', toggle);
+    toggle();
+})();
+</script>
+{% endblock %}

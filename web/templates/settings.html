@@ -1,0 +1,426 @@
+{% extends "base.html" %}
+
+{% block title %}Settings{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h2><i class="bi bi-gear"></i> Settings</h2>
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('dashboard') }}">Home</a></li>
+                    <li class="breadcrumb-item active">Settings</li>
+                </ol>
+            </nav>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-8">
+            <!-- Appearance Settings -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-palette"></i> Appearance</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">Theme</label>
+                        <div class="btn-group d-block" role="group">
+                            <input type="radio" class="btn-check" name="theme" id="theme-light" value="light" autocomplete="off">
+                            <label class="btn btn-outline-primary" for="theme-light">
+                                <i class="bi bi-sun"></i> Light
+                            </label>
+
+                            <input type="radio" class="btn-check" name="theme" id="theme-dark" value="dark" autocomplete="off">
+                            <label class="btn btn-outline-primary" for="theme-dark">
+                                <i class="bi bi-moon"></i> Dark
+                            </label>
+
+                            <input type="radio" class="btn-check" name="theme" id="theme-auto" value="auto" autocomplete="off" checked>
+                            <label class="btn btn-outline-primary" for="theme-auto">
+                                <i class="bi bi-circle-half"></i> Auto
+                            </label>
+                        </div>
+                        <div class="form-text">Choose your preferred color scheme. Auto will match your system preferences.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Account Settings -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-person"></i> Account Information</h5>
+                </div>
+                <div class="card-body">
+                    <dl class="row">
+                        <dt class="col-sm-3">Username:</dt>
+                        <dd class="col-sm-9">{{ user.username }}</dd>
+
+                        <dt class="col-sm-3">Email:</dt>
+                        <dd class="col-sm-9">{{ user.email }}</dd>
+
+                        <dt class="col-sm-3">Full Name:</dt>
+                        <dd class="col-sm-9">{{ user.full_name }}</dd>
+
+                        <dt class="col-sm-3">Role:</dt>
+                        <dd class="col-sm-9">
+                            {% if user.is_admin %}
+                            <span class="badge bg-danger">Administrator</span>
+                            {% else %}
+                            <span class="badge bg-info">User</span>
+                            {% endif %}
+                        </dd>
+
+                        <dt class="col-sm-3">Account Created:</dt>
+                        <dd class="col-sm-9">{{ user.created_at|datetime }}</dd>
+
+                        <dt class="col-sm-3">Last Login:</dt>
+                        <dd class="col-sm-9">{{ user.last_login|datetime if user.last_login else 'Never' }}</dd>
+                    </dl>
+                </div>
+            </div>
+
+            <!-- Device Credentials -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-key"></i> Device Credentials</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">Configure default credentials for connecting to network devices</p>
+                    <form id="credentialsForm">
+                        <div class="mb-3">
+                            <label for="deviceUsername" class="form-label">Device Username</label>
+                            <input type="text" class="form-control" id="deviceUsername" placeholder="admin">
+                            <div class="form-text">Default username for device connections (eAPI/SSH)</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="devicePassword" class="form-label">Device Password</label>
+                            <input type="password" class="form-control" id="devicePassword" placeholder="Leave empty for default switches">
+                            <div class="form-text">Default password for device connections. Leave empty for Arista switches on first boot (admin with no password).</div>
+                        </div>
+                        <div class="alert alert-info">
+                            <small>
+                                <i class="bi bi-info-circle"></i> Credentials are stored in browser localStorage and sent with each device operation.
+                                <strong>Note:</strong> Empty passwords are supported for default Arista switches (username "admin" with no password).
+                                For production, consider using environment variables.
+                            </small>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-save"></i> Save Credentials
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Notifications Settings -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-bell"></i> Notifications</h5>
+                </div>
+                <div class="card-body">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="notifyTasks" checked>
+                        <label class="form-check-label" for="notifyTasks">
+                            Task completion notifications
+                        </label>
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="notifyDevices" checked>
+                        <label class="form-check-label" for="notifyDevices">
+                            Device status changes
+                        </label>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="notifyConfiglets" checked>
+                        <label class="form-check-label" for="notifyConfiglets">
+                            Configlet updates
+                        </label>
+                    </div>
+                    <div class="form-text mt-2">Configure which events trigger notifications</div>
+                </div>
+            </div>
+
+            <!-- Email / SMTP Settings (admin only) -->
+            {% if user.is_admin %}
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-envelope-gear"></i> Email &amp; SMTP Settings</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">
+                        Configure outbound email for access-request notifications, approvals, and rejections.
+                        Leave SMTP Password blank to keep the existing value.
+                    </p>
+                    <form method="POST" action="{{ url_for('admin_settings_email') }}">
+                        <div class="mb-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="emailEnabled"
+                                       name="email_enabled" value="true"
+                                       {% if email_settings.enabled == 'true' %}checked{% endif %}>
+                                <label class="form-check-label" for="emailEnabled">Enable email sending</label>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-8 mb-3">
+                                <label for="smtpHost" class="form-label">SMTP Host</label>
+                                <input type="text" class="form-control" id="smtpHost" name="smtp_host"
+                                       value="{{ email_settings.smtp_host }}" placeholder="smtp.example.com">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label for="smtpPort" class="form-label">Port</label>
+                                <input type="number" class="form-control" id="smtpPort" name="smtp_port"
+                                       value="{{ email_settings.smtp_port }}" placeholder="587">
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="smtpUsername" class="form-label">SMTP Username</label>
+                                <input type="text" class="form-control" id="smtpUsername" name="smtp_username"
+                                       value="{{ email_settings.smtp_username }}" placeholder="user@example.com"
+                                       autocomplete="off">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="smtpPassword" class="form-label">SMTP Password</label>
+                                <input type="password" class="form-control" id="smtpPassword" name="smtp_password"
+                                       placeholder="Leave blank to keep existing" autocomplete="new-password">
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="fromEmail" class="form-label">From Address</label>
+                                <input type="email" class="form-control" id="fromEmail" name="from_email"
+                                       value="{{ email_settings.from_email }}" placeholder="noreply@example.com">
+                            </div>
+                            <div class="col-md-6 mb-3 d-flex align-items-end">
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" id="smtpTls"
+                                           name="smtp_use_tls" value="true"
+                                           {% if email_settings.smtp_use_tls == 'true' %}checked{% endif %}>
+                                    <label class="form-check-label" for="smtpTls">Use STARTTLS</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-save"></i> Save Email Settings
+                        </button>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Custom Dashboard Tiles -->
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-grid-3x3"></i> Custom Tiles</h5>
+                    <button class="btn btn-sm btn-primary" onclick="addCustomTile()">
+                        <i class="bi bi-plus"></i> Add Tile
+                    </button>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small">Add custom tiles to your dashboard for quick access to external tools</p>
+                    <div id="custom-tiles-list">
+                        <!-- Tiles will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <!-- Quick Actions -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-lightning"></i> Quick Actions</h5>
+                </div>
+                <div class="card-body d-grid gap-2">
+                    <a href="{{ url_for('dashboard') }}" class="btn btn-primary">
+                        <i class="bi bi-house"></i> Dashboard
+                    </a>
+                    <a href="{{ url_for('logout') }}" class="btn btn-outline-danger">
+                        <i class="bi bi-box-arrow-right"></i> Logout
+                    </a>
+                </div>
+            </div>
+
+            <!-- Theme Preview -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-eye"></i> Theme Preview</h5>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info mb-2">
+                        <strong>Info:</strong> This is an info message
+                    </div>
+                    <div class="alert alert-success mb-2">
+                        <strong>Success:</strong> Operation completed
+                    </div>
+                    <div class="alert alert-warning mb-0">
+                        <strong>Warning:</strong> Check this item
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Load saved theme preference
+const savedTheme = localStorage.getItem('theme') || 'auto';
+document.getElementById('theme-' + savedTheme).checked = true;
+
+// Apply theme immediately
+applyTheme(savedTheme);
+
+// Listen for theme changes
+document.querySelectorAll('input[name="theme"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+        const theme = e.target.value;
+        localStorage.setItem('theme', theme);
+        applyTheme(theme);
+    });
+});
+
+function applyTheme(theme) {
+    if (theme === 'auto') {
+        // Use system preference
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.setAttribute('data-bs-theme', prefersDark ? 'dark' : 'light');
+    } else {
+        document.documentElement.setAttribute('data-bs-theme', theme);
+    }
+}
+
+// Save notification preferences
+['notifyTasks', 'notifyDevices', 'notifyConfiglets'].forEach(id => {
+    const checkbox = document.getElementById(id);
+    // Load saved preference
+    const saved = localStorage.getItem(id);
+    if (saved !== null) {
+        checkbox.checked = saved === 'true';
+    }
+    // Save on change
+    checkbox.addEventListener('change', (e) => {
+        localStorage.setItem(id, e.target.checked);
+    });
+});
+
+// Device credentials management
+document.addEventListener('DOMContentLoaded', function() {
+    // Load saved credentials
+    const savedUsername = localStorage.getItem('deviceUsername');
+    const savedPassword = localStorage.getItem('devicePassword');
+
+    if (savedUsername) {
+        document.getElementById('deviceUsername').value = savedUsername;
+    }
+    if (savedPassword) {
+        document.getElementById('devicePassword').value = savedPassword;
+    }
+
+    // Handle credentials form submission
+    document.getElementById('credentialsForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const username = document.getElementById('deviceUsername').value;
+        const password = document.getElementById('devicePassword').value;
+
+        // Save to localStorage
+        localStorage.setItem('deviceUsername', username);
+        localStorage.setItem('devicePassword', password);
+
+        // Show success message
+        alert('✓ Device credentials saved!\n\nThese will be used for device connections.');
+    });
+
+    // Custom tiles management
+    loadCustomTiles();
+});
+
+// Custom Tiles Functions
+function loadCustomTiles() {
+    const tiles = JSON.parse(localStorage.getItem('customTiles') || '[]');
+    const container = document.getElementById('custom-tiles-list');
+
+    if (tiles.length === 0) {
+        container.innerHTML = '<p class="text-muted small">No custom tiles yet. Click "Add Tile" to create one.</p>';
+        return;
+    }
+
+    container.innerHTML = tiles.map((tile, index) => `
+        <div class="card mb-2">
+            <div class="card-body p-2">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <i class="bi ${tile.icon || 'bi-link'}"></i>
+                        <strong>${tile.name}</strong>
+                        <br><small class="text-muted">${tile.url || tile.path}</small>
+                    </div>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-primary" onclick="editCustomTile(${index})">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="btn btn-outline-danger" onclick="deleteCustomTile(${index})">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function addCustomTile() {
+    const name = prompt('Tile Name (e.g., "SolarWinds", "Wireshark"):');
+    if (!name) return;
+
+    const url = prompt('URL or File Path (e.g., "https://example.com" or "C:\\\\Program Files\\\\tool.exe"):');
+    if (!url) return;
+
+    const icon = prompt('Bootstrap Icon (e.g., "bi-speedometer", "bi-diagram-3", "bi-link"):', 'bi-link');
+    const color = prompt('Color (primary, success, info, warning, danger, secondary):', 'primary');
+
+    const tiles = JSON.parse(localStorage.getItem('customTiles') || '[]');
+    tiles.push({ name, url, icon, color });
+    localStorage.setItem('customTiles', JSON.stringify(tiles));
+
+    loadCustomTiles();
+    alert('✓ Custom tile added!\n\nIt will appear on your dashboard.');
+}
+
+function editCustomTile(index) {
+    const tiles = JSON.parse(localStorage.getItem('customTiles') || '[]');
+    const tile = tiles[index];
+
+    const name = prompt('Tile Name:', tile.name);
+    if (name === null) return;
+
+    const url = prompt('URL or File Path:', tile.url);
+    if (url === null) return;
+
+    const icon = prompt('Bootstrap Icon:', tile.icon || 'bi-link');
+    const color = prompt('Color:', tile.color || 'primary');
+
+    tiles[index] = { name, url, icon, color };
+    localStorage.setItem('customTiles', JSON.stringify(tiles));
+
+    loadCustomTiles();
+    alert('✓ Tile updated!');
+}
+
+function deleteCustomTile(index) {
+    if (!confirm('Delete this custom tile?')) return;
+
+    const tiles = JSON.parse(localStorage.getItem('customTiles') || '[]');
+    tiles.splice(index, 1);
+    localStorage.setItem('customTiles', JSON.stringify(tiles));
+
+    loadCustomTiles();
+}
+</script>
+{% endblock %}

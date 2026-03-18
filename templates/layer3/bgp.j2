@@ -1,0 +1,65 @@
+!
+! BGP Configuration
+!
+router bgp {{ bgp.asn }}
+   router-id {{ bgp.router_id }}
+   maximum-paths {{ bgp.max_paths | default(4) }} ecmp {{ bgp.ecmp_paths | default(4) }}
+   {% if bgp.distance %}
+   distance bgp {{ bgp.distance.external }} {{ bgp.distance.internal }} {{ bgp.distance.local }}
+   {% endif %}
+   !
+   {% if bgp.peer_groups %}
+   {% for pg in bgp.peer_groups %}
+   neighbor {{ pg.name }} peer group
+   {% if pg.remote_asn %}
+   neighbor {{ pg.name }} remote-as {{ pg.remote_asn }}
+   {% endif %}
+   {% if pg.send_community %}
+   neighbor {{ pg.name }} send-community
+   {% endif %}
+   {% if pg.maximum_routes %}
+   neighbor {{ pg.name }} maximum-routes {{ pg.maximum_routes }}
+   {% endif %}
+   {% endfor %}
+   !
+   {% endif %}
+   {% for neighbor in bgp.neighbors %}
+   neighbor {{ neighbor.ip }} remote-as {{ neighbor.remote_asn }}
+   neighbor {{ neighbor.ip }} description {{ neighbor.description }}
+   {% if neighbor.peer_group %}
+   neighbor {{ neighbor.ip }} peer group {{ neighbor.peer_group }}
+   {% endif %}
+   {% if neighbor.password %}
+   neighbor {{ neighbor.ip }} password 7 {{ neighbor.password }}
+   {% endif %}
+   {% endfor %}
+   !
+   {% if bgp.vlans %}
+   {% for vlan in bgp.vlans %}
+   vlan {{ vlan.id }}
+      rd {{ vlan.rd }}
+      route-target both {{ vlan.rt }}
+      redistribute learned
+   {% endfor %}
+   !
+   {% endif %}
+   {% if bgp.vrfs %}
+   {% for vrf in bgp.vrfs %}
+   vrf {{ vrf.name }}
+      rd {{ vrf.rd }}
+      route-target import evpn {{ vrf.rt_import }}
+      route-target export evpn {{ vrf.rt_export }}
+      redistribute connected
+   {% endfor %}
+   !
+   {% endif %}
+   {% if bgp.evpn_enabled %}
+   address-family evpn
+      neighbor EVPN-OVERLAY-PEERS activate
+   !
+   {% endif %}
+   address-family ipv4
+      {% for network in bgp.networks %}
+      network {{ network }}
+      {% endfor %}
+!

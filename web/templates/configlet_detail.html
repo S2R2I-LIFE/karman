@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block title %}{{ configlet.name }} - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('configlets') }}">Configlets</a></li>
+                <li class="breadcrumb-item active">{{ configlet.name }}</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-9">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h4 class="mb-0">
+                    <i class="bi bi-file-earmark-code"></i> {{ configlet.name }}
+                    <span class="badge bg-{{ 'primary' if configlet.configlet_type == 'static' else 'warning' }}">
+                        {{ configlet.configlet_type }}
+                    </span>
+                </h4>
+                <a href="{{ url_for('edit_configlet', name=configlet.name) }}" class="btn btn-outline-primary">
+                    <i class="bi bi-pencil"></i> Edit
+                </a>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">{{ configlet.description or 'No description' }}</p>
+                <hr>
+                <h5><i class="bi bi-code-square"></i> Configuration</h5>
+                <pre class="bg-dark text-light p-3 rounded" style="max-height: 600px; overflow-y: auto;"><code>{{ configlet.config }}</code></pre>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-clock-history"></i> Version History</h5>
+            </div>
+            <div class="card-body">
+                {% if history %}
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Version</th>
+                                <th>Date</th>
+                                <th>Author</th>
+                                <th>Reason</th>
+                                <th>Hash</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in history %}
+                            <tr>
+                                <td><span class="badge bg-secondary">v{{ entry.version }}</span></td>
+                                <td>{{ entry.changed_at|datetime }}</td>
+                                <td>{{ entry.changed_by }}</td>
+                                <td>{{ entry.reason }}</td>
+                                <td><code class="small">{{ entry.hash[:8] }}</code></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted">No version history</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-lightning"></i> Actions</h5>
+            </div>
+            <div class="card-body d-grid gap-2">
+                <a href="{{ url_for('export_configlet', name=configlet.name) }}" class="btn btn-success">
+                    <i class="bi bi-download"></i> Export
+                </a>
+                <button class="btn btn-info" onclick="copyToClipboard()">
+                    <i class="bi bi-clipboard"></i> Copy to Clipboard
+                </button>
+                <hr>
+                <button class="btn btn-danger" onclick="deleteConfiglet()">
+                    <i class="bi bi-trash"></i> Delete
+                </button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> Info</h5>
+            </div>
+            <div class="card-body">
+                <dl>
+                    <dt>Type</dt>
+                    <dd>{{ configlet.configlet_type }}</dd>
+                    <dt>Lines</dt>
+                    <dd>{{ configlet.config.split('\n')|length }}</dd>
+                    <dt>Hash</dt>
+                    <dd><code class="small">{{ configlet.hash[:16] }}</code></dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function deleteConfiglet() {
+    if (confirm('Are you sure you want to delete configlet "{{ configlet.name }}"? This action cannot be undone.')) {
+        fetch('/configlets/{{ configlet.name }}/delete', {
+            method: 'POST'
+        }).then(() => {
+            window.location.href = '{{ url_for("configlets") }}';
+        });
+    }
+}
+
+function copyToClipboard() {
+    const configText = document.querySelector('pre code').textContent;
+    navigator.clipboard.writeText(configText).then(() => {
+        // Change button text temporarily
+        const btn = event.target.closest('button');
+        const originalHTML = btn.innerHTML;
+        btn.innerHTML = '<i class="bi bi-check"></i> Copied!';
+        btn.classList.remove('btn-info');
+        btn.classList.add('btn-success');
+
+        setTimeout(() => {
+            btn.innerHTML = originalHTML;
+            btn.classList.remove('btn-success');
+            btn.classList.add('btn-info');
+        }, 2000);
+    }).catch(err => {
+        alert('Failed to copy to clipboard: ' + err);
+    });
+}
+</script>
+{% endblock %}

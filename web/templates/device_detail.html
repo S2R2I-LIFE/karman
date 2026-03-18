@@ -1,0 +1,669 @@
+{% extends "base.html" %}
+
+{% block title %}{{ device.hostname }} - {{ app_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* CLI output — fixed height, scrollable within its own pane */
+#commandOutput {
+    height: calc(100vh - 400px);
+    min-height: 300px;
+    overflow-y: auto;
+}
+
+/* Slightly taller tab panes so content doesn't feel cramped */
+.tab-content > .tab-pane { padding-top: 0.25rem; }
+
+/* Syntax highlighting is defined globally in style.css */
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb + help toggle -->
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex align-items-center justify-content-between mb-1">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb mb-0">
+                    <li class="breadcrumb-item"><a href="{{ url_for('devices') }}">Devices</a></li>
+                    <li class="breadcrumb-item active help-title" data-help-key="device_detail"
+                        onclick="toggleHelpPanel('device_detail')" title="Click to toggle page guide">
+                        {{ device.hostname }}
+                        <i class="bi bi-chevron-down ms-1 help-chev" id="help-chev-device_detail"></i>
+                    </li>
+                </ol>
+            </nav>
+        </div>
+        <div id="help-body-device_detail" class="help-body-inline mb-3">
+            <div class="row g-3">
+                <div class="col-md-5">
+                    <p class="text-muted">This page gives you a deep view into a single device. It is split into three tabs so that running show commands doesn't push telemetry data off-screen.</p>
+                    <p class="text-muted">Kármán connects to the device using whichever <strong>management type</strong> was configured — eAPI, SSH, or gNMI — so not every feature is available on every device.</p>
+                </div>
+                <div class="col-md-7">
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <div class="help-tip"><i class="bi bi-card-list text-primary"></i><span><strong>Overview tab</strong> — device facts (model, version, serial), applied configlets, and custom tags.</span></div>
+                            <div class="help-tip"><i class="bi bi-terminal text-secondary"></i><span><strong>CLI tab</strong> — run any EOS show command directly from the browser. Output is syntax-highlighted and stays within its own scrollable pane.</span></div>
+                            <div class="help-tip"><i class="bi bi-activity text-success"></i><span><strong>Telemetry tab</strong> — interface up/down history and link-flap counts from Prometheus. Only visible on <strong>gNMI-managed</strong> devices.</span></div>
+                        </div>
+                        <div class="col-6">
+                            <div class="help-tip"><i class="bi bi-wifi text-info"></i><span><strong>Test Connection</strong> — verifies that Kármán can reach the device right now using the configured management type.</span></div>
+                            <div class="help-tip"><i class="bi bi-clock-history text-warning"></i><span><strong>Telemetry range</strong> — use the 1h / 6h / 24h buttons to change the time window shown on the interface chart.</span></div>
+                            <div class="help-tip"><i class="bi bi-tags text-secondary"></i><span><strong>Tags</strong> — free-form labels you can attach to devices for filtering and grouping in future workflows.</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Connection Status & Actions -->
+<div class="row mb-3">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body py-2">
+                <div id="connectionStatus">
+                    <small class="text-muted">Click "Test Connection" to verify device accessibility</small>
+                </div>
+                <button class="btn btn-sm btn-outline-primary mt-2" onclick="testConnection()">
+                    <i class="bi bi-wifi"></i> Test Connection
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body py-2">
+                <div class="btn-group w-100" role="group">
+                    <button class="btn btn-sm btn-primary" onclick="syncDevice()">
+                        <i class="bi bi-arrow-clockwise"></i> Sync
+                    </button>
+                    <button class="btn btn-sm btn-info" onclick="runComplianceCheck()">
+                        <i class="bi bi-clipboard-check"></i> Compliance
+                    </button>
+                    <button class="btn btn-sm btn-warning" onclick="assignConfiglet()">
+                        <i class="bi bi-plus-circle"></i> Configlet
+                    </button>
+                    <button class="btn btn-sm btn-success" onclick="connectDevice()">
+                        <i class="bi bi-terminal"></i> Connect
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteDevice()">
+                        <i class="bi bi-trash"></i> Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Tab Navigation ── -->
+<ul class="nav nav-tabs mb-0" id="deviceTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="overview-tab" data-bs-toggle="tab"
+                data-bs-target="#overview-pane" type="button" role="tab">
+            <i class="bi bi-info-circle"></i> Overview
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="cli-tab" data-bs-toggle="tab"
+                data-bs-target="#cli-pane" type="button" role="tab">
+            <i class="bi bi-terminal"></i> CLI
+        </button>
+    </li>
+    {% if device.management_type.value == 'gnmi' %}
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="telemetry-tab" data-bs-toggle="tab"
+                data-bs-target="#telemetry-pane" type="button" role="tab">
+            <i class="bi bi-graph-up"></i> Telemetry
+        </button>
+    </li>
+    {% endif %}
+</ul>
+
+<div class="tab-content border border-top-0 rounded-bottom p-3 mb-4" id="deviceTabContent">
+
+    <!-- ══ Overview Tab ══ -->
+    <div class="tab-pane fade show active" id="overview-pane" role="tabpanel">
+        <div class="row">
+            <!-- Device Info -->
+            <div class="col-md-6 mb-3">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-hdd-network"></i> {{ device.hostname }}
+                            <span class="badge bg-{{ 'primary' if device.role.value == 'spine' else 'success' }}">{{ device.role.value }}</span>
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <dl class="row mb-0">
+                            <dt class="col-sm-4">IP Address</dt>
+                            <dd class="col-sm-8">{{ device.ip_address }}</dd>
+
+                            <dt class="col-sm-4">Model</dt>
+                            <dd class="col-sm-8">{{ device.model or 'N/A' }}</dd>
+
+                            <dt class="col-sm-4">Serial</dt>
+                            <dd class="col-sm-8">{{ device.serial_number or 'N/A' }}</dd>
+
+                            <dt class="col-sm-4">EOS Version</dt>
+                            <dd class="col-sm-8">{{ device.eos_version or 'N/A' }}</dd>
+
+                            <dt class="col-sm-4">Site</dt>
+                            <dd class="col-sm-8">{{ device.site }}</dd>
+
+                            <dt class="col-sm-4">Container</dt>
+                            <dd class="col-sm-8">{{ device.container }}</dd>
+
+                            <dt class="col-sm-4">Management</dt>
+                            <dd class="col-sm-8">
+                                {% if device.cvp_managed %}
+                                    <span class="badge bg-warning" style="color:#000;">CVP Managed</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ device.management_type.value }}</span>
+                                {% endif %}
+                            </dd>
+                        </dl>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configlets + Tags -->
+            <div class="col-md-6 mb-3">
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-files"></i> Assigned Configlets</h6>
+                    </div>
+                    <div class="card-body py-2">
+                        {% if device.configlets %}
+                        <ul class="list-group list-group-flush">
+                            {% for configlet in device.configlets %}
+                            <li class="list-group-item d-flex justify-content-between align-items-center px-0 py-1">
+                                <span class="small">{{ configlet }}</span>
+                                <a href="{{ url_for('configlet_detail', name=configlet) }}" class="btn btn-sm btn-outline-primary py-0">View</a>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <p class="text-muted mb-0 small">No configlets assigned</p>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-tags"></i> Tags</h6>
+                    </div>
+                    <div class="card-body py-2">
+                        {% if device.tags %}
+                            {% for key, value in device.tags.items() %}
+                            <span class="badge bg-info me-1 mb-1">{{ key }}: {{ value }}</span>
+                            {% endfor %}
+                        {% else %}
+                        <p class="text-muted mb-0 small">No tags</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ CLI Tab ══ -->
+    <div class="tab-pane fade" id="cli-pane" role="tabpanel">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-terminal"></i> CLI Viewer</h5>
+                <button class="btn btn-sm btn-outline-secondary" onclick="clearOutput()">
+                    <i class="bi bi-x-circle"></i> Clear
+                </button>
+            </div>
+            <div class="card-body">
+                <!-- Quick Commands -->
+                <div class="mb-2">
+                    <div class="btn-group btn-group-sm w-100" role="group">
+                        <button type="button" class="btn btn-outline-primary" onclick="selectCommand('show version')">
+                            <i class="bi bi-info-circle"></i> Ver
+                        </button>
+                        <button type="button" class="btn btn-outline-primary" onclick="selectCommand('show interfaces status')">
+                            <i class="bi bi-ethernet"></i> Int
+                        </button>
+                        <button type="button" class="btn btn-outline-primary" onclick="selectCommand('show ip route summary')">
+                            <i class="bi bi-diagram-3"></i> Route
+                        </button>
+                        <button type="button" class="btn btn-outline-primary" onclick="selectCommand('show system environment all')">
+                            <i class="bi bi-thermometer"></i> Env
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Category Dropdowns -->
+                <div class="mb-2">
+                    <select class="form-select form-select-sm mb-1" id="systemCommands" onchange="selectCommandFromDropdown(this)">
+                        <option value="">System Commands...</option>
+                        <option value="show version">show version</option>
+                        <option value="show boot-config">show boot-config</option>
+                        <option value="show system environment all">show system environment all</option>
+                        <option value="show processes top once">show processes top once</option>
+                        <option value="show clock">show clock</option>
+                    </select>
+                    <select class="form-select form-select-sm mb-1" id="interfaceCommands" onchange="selectCommandFromDropdown(this)">
+                        <option value="">Interface Commands...</option>
+                        <option value="show interfaces status">show interfaces status</option>
+                        <option value="show interfaces counters">show interfaces counters</option>
+                        <option value="show interfaces counters rates">show interfaces counters rates</option>
+                        <option value="show ip interface brief">show ip interface brief</option>
+                    </select>
+                    <select class="form-select form-select-sm mb-1" id="routingCommands" onchange="selectCommandFromDropdown(this)">
+                        <option value="">Routing/LLDP Commands...</option>
+                        <option value="show ip route summary">show ip route summary</option>
+                        <option value="show ip bgp summary">show ip bgp summary</option>
+                        <option value="show lldp neighbors">show lldp neighbors</option>
+                        <option value="show lldp neighbors detail">show lldp neighbors detail</option>
+                    </select>
+                </div>
+
+                <!-- Command Input -->
+                <div class="mb-2">
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control font-monospace" id="customCommand"
+                               placeholder="show..." onkeypress="handleCommandKeypress(event)">
+                        <button class="btn btn-primary" onclick="executeCommand()">
+                            <i class="bi bi-play-fill"></i>
+                        </button>
+                    </div>
+                    <small class="text-muted"><i class="bi bi-info-circle"></i> Show commands only</small>
+                </div>
+
+                <!-- Output — fixed height, scrollable -->
+                <div id="commandOutput" class="border rounded p-2 bg-dark text-light font-monospace"
+                     style="overflow-y: auto; font-size: 0.85em; display: none;"></div>
+
+                <!-- Output Actions -->
+                <div id="outputActions" class="mt-2" style="display: none;">
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button class="btn btn-outline-secondary" onclick="copyOutput()">
+                            <i class="bi bi-clipboard"></i> Copy
+                        </button>
+                        <button class="btn btn-outline-secondary" onclick="downloadOutput()">
+                            <i class="bi bi-download"></i> Download
+                        </button>
+                        <button class="btn btn-outline-secondary" onclick="clearOutput()">
+                            <i class="bi bi-x-circle"></i> Clear
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Command History -->
+                <div id="commandHistory" class="mt-2" style="display: none;">
+                    <small class="text-muted"><strong>Recent:</strong></small>
+                    <div id="historyList" class="small"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ Telemetry Tab (gNMI only) ══ -->
+    {% if device.management_type.value == 'gnmi' %}
+    <div class="tab-pane fade" id="telemetry-pane" role="tabpanel">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-graph-up"></i> Interface Telemetry</h5>
+                <div class="d-flex align-items-center gap-2">
+                    <div class="btn-group btn-group-sm" id="telemetryRangeGroup" role="group">
+                        <button type="button" class="btn btn-outline-secondary active" data-range="1h" onclick="loadTelemetry('1h')">1h</button>
+                        <button type="button" class="btn btn-outline-secondary" data-range="6h" onclick="loadTelemetry('6h')">6h</button>
+                        <button type="button" class="btn btn-outline-secondary" data-range="24h" onclick="loadTelemetry('24h')">24h</button>
+                    </div>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="loadTelemetry(currentRange)" title="Refresh">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="telemetryLoading" class="text-center py-4 text-muted">
+                    <div class="spinner-border spinner-border-sm me-2"></div> Loading telemetry…
+                </div>
+                <div id="telemetryNoData" class="text-center py-4 text-muted" style="display:none;">
+                    <i class="bi bi-bar-chart-line fs-3 d-block mb-2"></i>
+                    No telemetry data — device not yet tracked by gnmic, or hostname mismatch.
+                    <div id="telemetryError" class="text-danger small mt-1" style="display:none;"></div>
+                </div>
+                <div id="telemetryContent" style="display:none;">
+                    <canvas id="telemetryChart" style="max-height:260px;"></canvas>
+                    <div class="mt-3">
+                        <h6 class="text-muted mb-2"><i class="bi bi-lightning"></i> Link State Changes</h6>
+                        <div id="flapsTable"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+</div><!-- /tab-content -->
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// ── Device Actions ─────────────────────────────────────────────────────────
+function deleteDevice() {
+    if (confirm('Are you sure you want to delete {{ device.hostname }}?')) {
+        fetch('/devices/{{ device.hostname }}/delete', { method: 'POST' })
+            .then(() => { window.location.href = '{{ url_for("devices") }}'; });
+    }
+}
+
+function syncDevice() {
+    const username = localStorage.getItem('deviceUsername');
+    const password = localStorage.getItem('devicePassword') || '';
+    if (!username) { alert('Please configure device username in Settings first.'); window.location.href = '/settings'; return; }
+    if (!confirm('Sync running configuration from {{ device.hostname }}?')) return;
+    fetch('/devices/{{ device.hostname }}/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+    }).then(r => r.json()).then(data => {
+        if (data.success) { alert('Configuration synced! Configlet: ' + data.configlet); location.reload(); }
+        else alert('Error: ' + data.error);
+    }).catch(err => alert('Error syncing: ' + err));
+}
+
+function runComplianceCheck() {
+    const username = localStorage.getItem('deviceUsername');
+    const password = localStorage.getItem('devicePassword') || '';
+    if (!username) { alert('Please configure device username in Settings first.'); window.location.href = '/settings'; return; }
+    if (!confirm('Run compliance check on {{ device.hostname }}?')) return;
+    fetch('/devices/{{ device.hostname }}/compliance-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+    }).then(r => r.json()).then(data => {
+        if (data.success) {
+            alert(data.is_valid ? 'Compliance check passed!' : `Found ${data.errors.length} issues. Check task #${data.task_id}.`);
+            location.reload();
+        } else alert('Error: ' + data.error);
+    }).catch(err => alert('Error: ' + err));
+}
+
+function assignConfiglet() { window.location.href = '/devices/{{ device.hostname }}/assign-configlet'; }
+function connectDevice()   { window.open('/devices/{{ device.hostname }}/connect', '_blank', 'width=1024,height=768'); }
+
+function testConnection() {
+    const btn = event.target.closest('button');
+    const statusDiv = document.getElementById('connectionStatus');
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Testing...';
+    btn.disabled = true;
+    statusDiv.innerHTML = '<p class="text-muted">Testing connection...</p>';
+
+    const username = localStorage.getItem('deviceUsername') || 'admin';
+    const password = localStorage.getItem('devicePassword') || '';
+
+    fetch('/devices/{{ device.hostname }}/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+    }).then(r => r.json()).then(data => {
+        btn.innerHTML = orig; btn.disabled = false;
+        let html = data.success
+            ? '<div class="alert alert-success mb-0"><strong>✓ Connection Successful!</strong><br><br>'
+            : '<div class="alert alert-danger mb-0"><strong>✗ Connection Failed</strong><br><br>';
+        if (data.eapi) html += `<i class="bi bi-${data.eapi.available ? 'check' : 'x'}-circle text-${data.eapi.available ? 'success' : 'danger'}"></i> <strong>eAPI:</strong> ${data.eapi.message}<br>`;
+        if (data.ssh)  html += `<i class="bi bi-${data.ssh.available  ? 'check' : 'x'}-circle text-${data.ssh.available  ? 'success' : 'danger'}"></i> <strong>SSH:</strong>  ${data.ssh.message}`;
+        if (data.error) html += `<br><small>${data.error}</small>`;
+        html += '</div>';
+        statusDiv.innerHTML = html;
+    }).catch(err => {
+        btn.innerHTML = orig; btn.disabled = false;
+        statusDiv.innerHTML = `<div class="alert alert-danger mb-0"><strong>Error:</strong> ${err.message || 'Test failed'}</div>`;
+    });
+}
+
+// ── CLI Viewer ─────────────────────────────────────────────────────────────
+let commandHistory = [];
+
+function selectCommand(cmd) {
+    document.getElementById('customCommand').value = cmd;
+    document.getElementById('customCommand').focus();
+}
+function selectCommandFromDropdown(el) { if (el.value) { selectCommand(el.value); el.value = ''; } }
+function handleCommandKeypress(e) { if (e.key === 'Enter') executeCommand(); }
+
+// ── Syntax Highlighting ────────────────────────────────────────────────────
+function highlightOutput(text) {
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch(e) {}
+    return parsed !== null ? syntaxHighlightJSON(JSON.stringify(parsed, null, 2)) : highlightEOS(text);
+}
+
+function syntaxHighlightJSON(str) {
+    return str.replace(
+        /("(?:\\.|[^"\\])*"\s*:?)|\b(true|false|null)\b|(-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+        function(match, strPart, boolNullPart) {
+            if (strPart !== undefined) return `<span class="${match.trimEnd().endsWith(':') ? 'json-key' : 'json-string'}">${escapeHtml(match)}</span>`;
+            if (boolNullPart !== undefined) return `<span class="${match==='true'?'json-bool-t':match==='false'?'json-bool-f':'json-null'}">${match}</span>`;
+            return `<span class="json-num">${match}</span>`;
+        }
+    );
+}
+
+function highlightEOS(text) {
+    let s = escapeHtml(text);
+    s = s.replace(/\b(Ethernet|Management|Loopback|Vlan|Port-Channel|Mlag|Tunnel|Vxlan|Dps)(\d+(?:\/\d+)*(?:\.\d+)?)\b/g, '<span class="eos-iface">$1$2</span>');
+    s = s.replace(/\b(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?\b/g, '<span class="eos-ip">$&</span>');
+    s = s.replace(/\b([0-9a-fA-F]{2}[:\-]){5}[0-9a-fA-F]{2}\b/g, '<span class="eos-mac">$&</span>');
+    s = s.replace(/\b(down|notconnect|errdisabled|inactive|disabled)\b/gi, '<span class="eos-down">$&</span>');
+    s = s.replace(/\b(connected|up)\b/g, '<span class="eos-up">$&</span>');
+    return s;
+}
+
+function executeCommand() {
+    const commandInput = document.getElementById('customCommand');
+    const command = commandInput.value.trim();
+    if (!command) { alert('Please enter a command'); return; }
+
+    const outputDiv   = document.getElementById('commandOutput');
+    const actionsDiv  = document.getElementById('outputActions');
+    const historyDiv  = document.getElementById('commandHistory');
+    outputDiv.style.display  = 'block';
+    actionsDiv.style.display = 'block';
+    historyDiv.style.display = 'block';
+
+    outputDiv.innerHTML = `<div class="text-center text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Executing: <code>${escapeHtml(command)}</code></div>`;
+
+    const username = sessionStorage.getItem('deviceUsername') || localStorage.getItem('deviceUsername') || 'admin';
+    const password = sessionStorage.getItem('devicePassword') || localStorage.getItem('devicePassword') || '';
+
+    fetch('/api/devices/{{ device.hostname }}/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command, username, password })
+    }).then(r => r.json()).then(data => {
+        if (data.success) {
+            const output = data.output || 'Command executed (no output)';
+            outputDiv.innerHTML = `<div class="mb-2 text-info"><small><i class="bi bi-terminal"></i> {{ device.hostname }}# ${escapeHtml(command)}</small></div><pre class="mb-0" style="white-space:pre-wrap;word-wrap:break-word;">${highlightOutput(output)}</pre>`;
+            addToHistory(command);
+            commandInput.value = '';
+        } else {
+            outputDiv.innerHTML = `<div class="alert alert-danger mb-0"><strong><i class="bi bi-exclamation-triangle"></i> Failed</strong><br><small>${escapeHtml(data.error || 'Unknown error')}</small></div>`;
+        }
+    }).catch(err => {
+        outputDiv.innerHTML = `<div class="alert alert-danger mb-0"><strong><i class="bi bi-x-circle"></i> Error</strong><br><small>${escapeHtml(err.message || 'Failed to execute')}</small></div>`;
+    });
+}
+
+function copyOutput() {
+    navigator.clipboard.writeText(document.getElementById('commandOutput').innerText).then(() => {
+        const btn = event.target.closest('button'), orig = btn.innerHTML;
+        btn.innerHTML = '<i class="bi bi-check"></i> Copied!';
+        setTimeout(() => btn.innerHTML = orig, 2000);
+    }).catch(err => alert('Copy failed: ' + err));
+}
+
+function downloadOutput() {
+    const text = document.getElementById('commandOutput').innerText;
+    const ts   = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const a    = Object.assign(document.createElement('a'), {
+        href: URL.createObjectURL(new Blob([text], { type: 'text/plain' })),
+        download: `{{ device.hostname }}_output_${ts}.txt`
+    });
+    a.click(); URL.revokeObjectURL(a.href);
+}
+
+function clearOutput() {
+    const outputDiv = document.getElementById('commandOutput');
+    outputDiv.innerHTML = '';
+    outputDiv.style.display = 'none';
+    document.getElementById('outputActions').style.display = 'none';
+    document.getElementById('customCommand').value = '';
+}
+
+function addToHistory(command) {
+    commandHistory = [...new Set([command, ...commandHistory])].slice(0, 10);
+    document.getElementById('historyList').innerHTML = commandHistory
+        .map(cmd => `<span class="badge bg-secondary me-1 mb-1" style="cursor:pointer;" onclick="selectCommand('${escapeHtml(cmd)}')">${escapeHtml(cmd)}</span>`)
+        .join('');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// ── Tab State Persistence ──────────────────────────────────────────────────
+(function () {
+    const KEY = 'deviceTab_{{ device.hostname }}';
+    const saved = sessionStorage.getItem(KEY);
+    if (saved) {
+        const el = document.querySelector(`#deviceTabs button[data-bs-target="${saved}"]`);
+        if (el) bootstrap.Tab.getOrCreateInstance(el).show();
+    }
+    document.getElementById('deviceTabs').addEventListener('shown.bs.tab', e => {
+        sessionStorage.setItem(KEY, e.target.dataset.bsTarget);
+    });
+})();
+
+{% if device.management_type.value == 'gnmi' %}
+// ── Interface Telemetry ────────────────────────────────────────────────────
+let currentRange  = '1h';
+let telemetryChart = null;
+let telemetryLoaded = false;
+
+const INTF_COLORS = [
+    '#4e9af1','#f1914e','#4ef18a','#f14e7a','#c44ef1',
+    '#f1e04e','#4ef1e0','#f14ecc','#8af14e','#4e6ef1'
+];
+
+// Load on first time the Telemetry tab is shown
+document.getElementById('telemetry-tab').addEventListener('shown.bs.tab', () => {
+    if (!telemetryLoaded) { telemetryLoaded = true; loadTelemetry('1h'); }
+});
+
+function loadTelemetry(range) {
+    currentRange = range;
+    document.querySelectorAll('#telemetryRangeGroup button').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.range === range);
+    });
+    document.getElementById('telemetryLoading').style.display = 'block';
+    document.getElementById('telemetryNoData').style.display  = 'none';
+    document.getElementById('telemetryContent').style.display = 'none';
+
+    fetch(`/api/metrics/{{ device.hostname }}?range=${range}`)
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('telemetryLoading').style.display = 'none';
+            if (!data.has_data) {
+                const errDiv = document.getElementById('telemetryError');
+                if (data.error) { errDiv.textContent = 'Server error: ' + data.error; errDiv.style.display = 'block'; }
+                document.getElementById('telemetryNoData').style.display = 'block';
+                return;
+            }
+            document.getElementById('telemetryContent').style.display = 'block';
+            requestAnimationFrame(() => { renderChart(data); renderFlapsTable(data); });
+        })
+        .catch(err => {
+            console.error('Telemetry load failed:', err);
+            document.getElementById('telemetryLoading').style.display = 'none';
+            document.getElementById('telemetryNoData').style.display  = 'block';
+            const errDiv = document.getElementById('telemetryError');
+            errDiv.textContent = 'JS error: ' + String(err);
+            errDiv.style.display = 'block';
+        });
+}
+
+function renderChart(data) {
+    const ctx = document.getElementById('telemetryChart').getContext('2d');
+    if (telemetryChart) telemetryChart.destroy();
+
+    function fmtTs(tsMs) {
+        const d = new Date(tsMs);
+        return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+    }
+
+    const datasets = data.interfaces.map((intf, idx) => ({
+        label: intf,
+        data: (data.active_history[intf] || []).map(([ts, val]) => ({ x: ts * 1000, y: val })),
+        borderColor: INTF_COLORS[idx % INTF_COLORS.length],
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        stepped: 'before',
+        pointRadius: 0,
+        tension: 0,
+    }));
+
+    telemetryChart = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+            parsing: false,
+            responsive: true,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+                tooltip: {
+                    callbacks: {
+                        title: items => fmtTs(items[0].parsed.x),
+                        label: item => ` ${item.dataset.label}: ${item.parsed.y === 1 ? 'Up' : 'Down'}`
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    ticks: { maxTicksLimit: 8, font: { size: 11 }, callback: v => fmtTs(v) },
+                    grid: { display: false },
+                },
+                y: {
+                    min: -0.1, max: 1.3,
+                    ticks: { stepSize: 1, callback: v => v === 0 ? 'Down' : v === 1 ? 'Up' : '', font: { size: 11 } },
+                    grid: { color: 'rgba(128,128,128,0.15)' },
+                }
+            }
+        }
+    });
+}
+
+function renderFlapsTable(data) {
+    const div = document.getElementById('flapsTable');
+    const sorted = data.interfaces.map(intf => ({ intf, flaps: data.link_flaps[intf] || 0 }))
+                                  .sort((a, b) => b.flaps - a.flaps);
+    if (sorted.every(r => r.flaps === 0)) {
+        div.innerHTML = '<small class="text-muted">No link state changes recorded.</small>';
+        return;
+    }
+    const rows = sorted.map(({ intf, flaps }) => {
+        const badge = flaps === 0
+            ? `<span class="badge bg-success">0</span>`
+            : flaps < 5
+            ? `<span class="badge bg-warning text-dark">${flaps}</span>`
+            : `<span class="badge bg-danger">${flaps}</span>`;
+        return `<tr><td class="font-monospace small">${escapeHtml(intf)}</td><td>${badge}</td></tr>`;
+    }).join('');
+    div.innerHTML = `<table class="table table-sm table-borderless mb-0" style="max-width:320px;">
+        <thead><tr><th class="small text-muted">Interface</th><th class="small text-muted">Changes</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+}
+{% endif %}
+</script>
+{% endblock %}

@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}Configuration Builder - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12 mb-4">
+        <h1><i class="bi bi-tools"></i> Configuration Builder</h1>
+        <p class="text-muted">Build device configurations from templates</p>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-gear"></i> Build Configuration</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('build_config') }}">
+                    <div class="mb-4">
+                        <label for="device_file" class="form-label">Device Variables File *</label>
+                        <select class="form-select" id="device_file" name="device_file" required>
+                            <option value="">Select device...</option>
+                            {% for device_var in device_vars %}
+                            <option value="{{ device_var }}">{{ device_var }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Device-specific YAML file with configuration variables</div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="form-label">Select Templates *</label>
+                        <div class="row">
+                            {% for category in ['base', 'layer2', 'layer3', 'overlays'] %}
+                            <div class="col-md-6 mb-3">
+                                <div class="card">
+                                    <div class="card-header bg-light">
+                                        <strong>{{ category|title }}</strong>
+                                    </div>
+                                    <div class="card-body">
+                                        {% for template in templates %}
+                                            {% if template.category == category %}
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" name="templates"
+                                                       value="{{ template.path }}" id="template_{{ loop.index }}">
+                                                <label class="form-check-label" for="template_{{ loop.index }}">
+                                                    {{ template.name }}
+                                                </label>
+                                            </div>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="output_name" class="form-label">Output Filename</label>
+                        <input type="text" class="form-control" id="output_name" name="output_name"
+                               placeholder="device-config.cfg" value="generated.cfg">
+                    </div>
+
+                    <hr>
+
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <button type="reset" class="btn btn-secondary">Reset</button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-hammer"></i> Build Configuration
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> How It Works</h5>
+            </div>
+            <div class="card-body">
+                <ol>
+                    <li>Select a device variables file (YAML)</li>
+                    <li>Choose templates to apply</li>
+                    <li>Click "Build Configuration"</li>
+                    <li>Review and deploy the generated config</li>
+                </ol>
+                <hr>
+                <h6>Available Templates</h6>
+                <p class="small">
+                    <strong>Base:</strong> System configs<br>
+                    <strong>Layer2:</strong> VLANs, MLAG, STP<br>
+                    <strong>Layer3:</strong> BGP, OSPF, Routes<br>
+                    <strong>Overlays:</strong> VXLAN, EVPN
+                </p>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-lightbulb"></i> Tips</h5>
+            </div>
+            <div class="card-body">
+                <ul class="small">
+                    <li>Start with base/system.j2 for hostname and management</li>
+                    <li>Add layer2 templates for switch configs</li>
+                    <li>Use layer3 templates for routing</li>
+                    <li>Combine templates as needed for your topology</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

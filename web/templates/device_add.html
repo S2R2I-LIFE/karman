@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+
+{% block title %}Add Device - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('devices') }}">Devices</a></li>
+                <li class="breadcrumb-item active">Add Device</li>
+            </ol>
+        </nav>
+
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0"><i class="bi bi-plus-circle"></i> Add New Device</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="hostname" class="form-label">Hostname *</label>
+                            <input type="text" class="form-control" id="hostname" name="hostname" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="ip_address" class="form-label">IP Address *</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="ip_address" name="ip_address" required>
+                                <button type="button" class="btn btn-outline-secondary" id="detectBtn" onclick="detectManagementType()" title="Auto-detect management type">
+                                    <i class="bi bi-search"></i> Detect
+                                </button>
+                            </div>
+                            <div id="detectResult" class="mt-1" style="display:none;"></div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="role" class="form-label">Role *</label>
+                            <select class="form-select" id="role" name="role" required>
+                                <option value="">Select Role...</option>
+                                <option value="spine">Spine</option>
+                                <option value="leaf">Leaf</option>
+                                <option value="border">Border</option>
+                                <option value="core">Core</option>
+                                <option value="access">Access</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="site" class="form-label">Site *</label>
+                            <input type="text" class="form-control" id="site" name="site" required>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="model" class="form-label">Model</label>
+                            <input type="text" class="form-control" id="model" name="model" placeholder="e.g., DCS-7050SX-128">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="serial_number" class="form-label">Serial Number</label>
+                            <input type="text" class="form-control" id="serial_number" name="serial_number">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="eos_version" class="form-label">EOS Version</label>
+                            <input type="text" class="form-control" id="eos_version" name="eos_version" placeholder="e.g., 4.27.3F">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="container" class="form-label">Container</label>
+                            <input type="text" class="form-control" id="container" name="container" value="Undefined">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="management_type" class="form-label">Management Type *</label>
+                            <select class="form-select" id="management_type" name="management_type" required>
+                                <option value="eapi" selected>eAPI (HTTPS — port 443)</option>
+                                <option value="ssh">SSH (port 22)</option>
+                                <option value="gnmi">gNMI / TerminAttr (port 6030)</option>
+                                <option value="cvp">CVP</option>
+                            </select>
+                            <div class="form-text">Enter an IP above and click <strong>Detect</strong> to auto-select.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <div class="form-check mt-4">
+                                <input class="form-check-input" type="checkbox" id="cvp_managed" name="cvp_managed">
+                                <label class="form-check-label" for="cvp_managed">
+                                    CVP Managed Device
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row" id="gnmi_port_row" style="display:none;">
+                        <div class="col-md-4 mb-3">
+                            <label for="gnmi_port" class="form-label">gNMI Port</label>
+                            <input type="number" class="form-control" id="gnmi_port" name="gnmi_port"
+                                   value="6030" min="1" max="65535">
+                            <div class="form-text">TerminAttr default is 6030. Native EOS gNMI also uses 6030.</div>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <a href="{{ url_for('devices') }}" class="btn btn-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-plus-circle"></i> Add Device
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const sel = document.getElementById('management_type');
+    const row = document.getElementById('gnmi_port_row');
+    function toggle() { row.style.display = sel.value === 'gnmi' ? '' : 'none'; }
+    sel.addEventListener('change', toggle);
+    toggle();
+})();
+
+function detectManagementType() {
+    const ip = document.getElementById('ip_address').value.trim();
+    if (!ip) {
+        alert('Enter an IP address first.');
+        document.getElementById('ip_address').focus();
+        return;
+    }
+
+    const btn = document.getElementById('detectBtn');
+    const resultDiv = document.getElementById('detectResult');
+    const gnmiPort = parseInt(document.getElementById('gnmi_port').value) || 6030;
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    resultDiv.style.display = 'none';
+
+    fetch('/api/detect-management-type', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip, gnmi_port: gnmiPort })
+    })
+    .then(r => r.json())
+    .then(data => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-search"></i> Detect';
+
+        if (!data.success) {
+            resultDiv.innerHTML = `<small class="text-danger"><i class="bi bi-exclamation-circle"></i> ${data.error}</small>`;
+            resultDiv.style.display = 'block';
+            return;
+        }
+
+        // Auto-select the suggested management type
+        if (data.suggested) {
+            document.getElementById('management_type').value = data.suggested;
+            document.getElementById('management_type').dispatchEvent(new Event('change'));
+        }
+
+        // Build port badges
+        const badges = {
+            gnmi: data.reachable.gnmi
+                ? `<span class="badge bg-success">gNMI :${gnmiPort} ✓</span>`
+                : `<span class="badge bg-secondary">gNMI :${gnmiPort} ✗</span>`,
+            eapi: data.reachable.eapi
+                ? `<span class="badge bg-success">eAPI :443 ✓</span>`
+                : `<span class="badge bg-secondary">eAPI :443 ✗</span>`,
+            ssh: data.reachable.ssh
+                ? `<span class="badge bg-success">SSH :22 ✓</span>`
+                : `<span class="badge bg-secondary">SSH :22 ✗</span>`,
+        };
+
+        const suggestion = data.suggested
+            ? `<span class="text-success fw-semibold">→ ${data.suggested.toUpperCase()} selected</span>`
+            : `<span class="text-warning">No ports reachable — check IP and firewall</span>`;
+
+        resultDiv.innerHTML = `
+            <div class="d-flex flex-wrap gap-1 align-items-center">
+                ${badges.gnmi} ${badges.eapi} ${badges.ssh}
+                <span class="text-muted small ms-1">${suggestion}</span>
+            </div>`;
+        resultDiv.style.display = 'block';
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-search"></i> Detect';
+        resultDiv.innerHTML = `<small class="text-danger"><i class="bi bi-exclamation-circle"></i> Detection failed: ${err.message}</small>`;
+        resultDiv.style.display = 'block';
+    });
+}
+</script>
+{% endblock %}

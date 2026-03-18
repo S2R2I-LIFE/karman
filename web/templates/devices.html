@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+
+{% block title %}Devices - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-start mb-4">
+            <div>
+                <h1 class="mb-1 help-title" data-help-key="devices" onclick="toggleHelpPanel('devices')">
+                    <i class="bi bi-hdd-network"></i> Device Inventory
+                    <i class="bi bi-chevron-down ms-2 help-chev" id="help-chev-devices"></i>
+                </h1>
+                <div id="help-body-devices" class="help-body-inline mt-2">
+                    <div class="row g-3">
+                        <div class="col-md-5">
+                            <p class="text-muted">The <strong>Device Inventory</strong> is the source of truth for all network devices managed by Kármán. Every device you add here becomes available for telemetry polling, CLI command execution, configlet deployment, and task tracking.</p>
+                            <p class="text-muted">Each device is assigned a <strong>management type</strong> that tells Kármán how to communicate with it. Use the <strong>Detect</strong> button on the Add Device form to automatically probe which protocols are reachable.</p>
+                        </div>
+                        <div class="col-md-7">
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <div class="help-tip"><i class="bi bi-ethernet text-primary"></i><span><strong>eAPI (HTTPS·443)</strong> — Arista's REST API. The most feature-rich option; returns structured JSON for all show commands.</span></div>
+                                    <div class="help-tip"><i class="bi bi-terminal text-secondary"></i><span><strong>SSH (port 22)</strong> — traditional CLI access via Netmiko. Works on any device; output is plain text.</span></div>
+                                    <div class="help-tip"><i class="bi bi-reception-4 text-success"></i><span><strong>gNMI (port 6030)</strong> — streaming telemetry via TerminAttr. Required for the Interface Telemetry tab on the device detail page.</span></div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="help-tip"><i class="bi bi-cloud text-info"></i><span><strong>CVP</strong> — device is managed by CloudVision Portal. Kármán defers configuration changes to CVP for these devices.</span></div>
+                                    <div class="help-tip"><i class="bi bi-building text-secondary"></i><span><strong>Site</strong> — a free-text label used to group devices on the Dashboard. Typically a location code such as <code>DC1</code> or <code>LON</code>.</span></div>
+                                    <div class="help-tip"><i class="bi bi-box text-warning"></i><span><strong>Container</strong> — the CVP container this device belongs to (e.g. <code>Undefined</code>, <code>Spine</code>). Used for CVP-managed workflows.</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <a href="{{ url_for('add_device') }}" class="btn btn-primary flex-shrink-0 ms-3">
+                <i class="bi bi-plus-circle"></i> Add Device
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <form method="get" class="row g-3">
+                    <div class="col-md-3">
+                        <label for="role" class="form-label">Role</label>
+                        <select class="form-select" id="role" name="role">
+                            <option value="">All Roles</option>
+                            <option value="spine">Spine</option>
+                            <option value="leaf">Leaf</option>
+                            <option value="border">Border</option>
+                            <option value="core">Core</option>
+                            <option value="access">Access</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="site" class="form-label">Site</label>
+                        <input type="text" class="form-control" id="site" name="site" placeholder="e.g., datacenter1">
+                    </div>
+                    <div class="col-md-3">
+                        <label for="mgmt_type" class="form-label">Management Type</label>
+                        <select class="form-select" id="mgmt_type" name="mgmt_type">
+                            <option value="">All Types</option>
+                            <option value="cvp">CVP Managed</option>
+                            <option value="eapi">eAPI (HTTPS)</option>
+                            <option value="ssh">SSH</option>
+                            <option value="gnmi">gNMI / TerminAttr</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="bi bi-funnel"></i> Filter
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Device Table -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Devices ({{ devices|length }})</h5>
+            </div>
+            <div class="card-body">
+                {% if devices %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Hostname</th>
+                                <th>IP Address</th>
+                                <th>Role</th>
+                                <th>Site</th>
+                                <th>Model</th>
+                                <th>Management</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for device in devices %}
+                            <tr>
+                                <td>
+                                    <a href="{{ url_for('device_detail', hostname=device.hostname) }}" class="text-decoration-none">
+                                        <i class="bi bi-hdd-network text-primary"></i>
+                                        <strong>{{ device.hostname }}</strong>
+                                    </a>
+                                </td>
+                                <td>{{ device.ip_address }}</td>
+                                <td>
+                                    <span class="badge bg-{{ 'primary' if device.role.value == 'spine' else 'success' if device.role.value == 'leaf' else 'info' }}">
+                                        {{ device.role.value }}
+                                    </span>
+                                </td>
+                                <td>{{ device.site }}</td>
+                                <td>{{ device.model }}</td>
+                                <td>
+                                    {% if device.cvp_managed %}
+                                        <span class="badge bg-warning text-dark">
+                                            <i class="bi bi-cloud-check"></i> CVP
+                                        </span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">
+                                            <i class="bi bi-gear"></i> {{ device.management_type.value }}
+                                        </span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm" role="group">
+                                        <a href="{{ url_for('device_detail', hostname=device.hostname) }}"
+                                           class="btn btn-outline-primary" title="View Details">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                        <a href="{{ url_for('edit_device', hostname=device.hostname) }}"
+                                           class="btn btn-outline-secondary" title="Edit">
+                                            <i class="bi bi-pencil"></i>
+                                        </a>
+                                        <button class="btn btn-outline-danger" title="Delete"
+                                                onclick="deleteDevice('{{ device.hostname }}')">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-center text-muted">No devices found. <a href="{{ url_for('add_device') }}">Add your first device</a></p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function deleteDevice(hostname) {
+    if (confirm(`Are you sure you want to delete ${hostname}?`)) {
+        fetch(`/devices/${hostname}/delete`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message || 'Device deleted successfully');
+                window.location.reload();
+            } else {
+                alert('Failed to delete device: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error deleting device: ' + error);
+        });
+    }
+}
+</script>
+{% endblock %}

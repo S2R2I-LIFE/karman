@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}Tasks - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-start mb-4">
+            <div>
+                <h1 class="mb-1 help-title" data-help-key="tasks" onclick="toggleHelpPanel('tasks')">
+                    <i class="bi bi-list-check"></i> Change Control Tasks
+                    <i class="bi bi-chevron-down ms-2 help-chev" id="help-chev-tasks"></i>
+                </h1>
+                <div id="help-body-tasks" class="help-body-inline mt-2">
+                    <div class="row g-3">
+                        <div class="col-md-5">
+                            <p class="text-muted"><strong>Tasks</strong> are the audit trail for every configuration change made through Kármán. Any time a configlet is applied, a CLI command is pushed, or a bulk operation runs, a task is created to track it from start to finish.</p>
+                            <p class="text-muted">Tasks give you a controlled, reviewable workflow — you can see exactly what was sent to a device, what the device returned, and whether the operation succeeded or needs attention.</p>
+                        </div>
+                        <div class="col-md-7">
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <div class="help-tip"><i class="bi bi-hourglass-split text-warning"></i><span><strong>Pending</strong> — task has been created but not yet executed. You can review and cancel it before it runs.</span></div>
+                                    <div class="help-tip"><i class="bi bi-arrow-repeat text-primary"></i><span><strong>Running</strong> — task is actively connecting to devices and pushing configuration. Live logs appear in real time.</span></div>
+                                    <div class="help-tip"><i class="bi bi-check-circle-fill text-success"></i><span><strong>Completed</strong> — all devices responded successfully. The full output log is preserved for auditing.</span></div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="help-tip"><i class="bi bi-x-circle-fill text-danger"></i><span><strong>Failed</strong> — one or more devices returned an error. Open the task to see per-device logs and diagnose the issue.</span></div>
+                                    <div class="help-tip"><i class="bi bi-file-text text-secondary"></i><span><strong>Logs</strong> — every task stores a timestamped log of exactly what was sent and received, so you have a full change record.</span></div>
+                                    <div class="help-tip"><i class="bi bi-funnel text-info"></i><span><strong>Filter</strong> — use the status tabs above the list to focus on Pending, Running, or Failed tasks that need attention.</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <a href="{{ url_for('create_task') }}" class="btn btn-primary flex-shrink-0 ms-3">
+                <i class="bi bi-plus-circle"></i> Create Task
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Status Filter -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="btn-group" role="group">
+            <a href="{{ url_for('tasks') }}" class="btn btn-outline-secondary {% if not status_filter %}active{% endif %}">
+                All
+            </a>
+            <a href="{{ url_for('tasks', status='pending') }}" class="btn btn-outline-warning {% if status_filter == 'pending' %}active{% endif %}">
+                Pending
+            </a>
+            <a href="{{ url_for('tasks', status='in_progress') }}" class="btn btn-outline-info {% if status_filter == 'in_progress' %}active{% endif %}">
+                In Progress
+            </a>
+            <a href="{{ url_for('tasks', status='completed') }}" class="btn btn-outline-success {% if status_filter == 'completed' %}active{% endif %}">
+                Completed
+            </a>
+            <a href="{{ url_for('tasks', status='failed') }}" class="btn btn-outline-danger {% if status_filter == 'failed' %}active{% endif %}">
+                Failed
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Tasks List -->
+<div class="row">
+    <div class="col-12">
+        {% if tasks %}
+            {% for task in tasks %}
+            <div class="card mb-3">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-8">
+                            <h5>
+                                <a href="{{ url_for('task_detail', task_id=task.task_id) }}" class="text-decoration-none">
+                                    Task #{{ task.task_id }}
+                                </a>
+                                <span class="badge bg-{{ 'success' if task.status == 'completed' else 'warning' if task.status == 'pending' else 'info' if task.status == 'in_progress' else 'danger' }}">
+                                    {{ task.status }}
+                                </span>
+                            </h5>
+                            <p class="mb-2">{{ task.description }}</p>
+                            <small class="text-muted">
+                                <i class="bi bi-clock"></i> {{ task.created_at|timeago }} |
+                                <i class="bi bi-person"></i> {{ task.created_by }} |
+                                <i class="bi bi-tag"></i> {{ task.task_type }}
+                            </small>
+                        </div>
+                        <div class="col-md-4 text-end d-flex gap-2 justify-content-end align-items-center">
+                            <a href="{{ url_for('task_detail', task_id=task.task_id) }}" class="btn btn-outline-primary btn-sm">
+                                View Details <i class="bi bi-arrow-right"></i>
+                            </a>
+                            <form method="POST" action="{{ url_for('delete_task', task_id=task.task_id) }}"
+                                  onsubmit="return confirm('Delete Task #{{ task.task_id }}? This cannot be undone.')">
+                                <button type="submit" class="btn btn-outline-danger btn-sm">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="card">
+                <div class="card-body text-center">
+                    <p class="text-muted">No tasks found. <a href="{{ url_for('create_task') }}">Create your first task</a></p>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

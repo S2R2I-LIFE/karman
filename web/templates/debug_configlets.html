@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block title %}Configlets Debug - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1><i class="bi bi-bug"></i> Configlets Debug Page</h1>
+        <p class="lead">This page helps diagnose issues with configlet display.</p>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>Database Check</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Total configlets in database:</strong> <span id="dbCount">Loading...</span></p>
+                <button class="btn btn-primary btn-sm" onclick="checkDatabase()">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>Template Data Check</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Configlets passed to template:</strong> {{ configlets|length }}</p>
+                <p><strong>Search filter:</strong> {{ search if search else 'None' }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5>Raw Configlet Data (First 10)</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Lines</th>
+                                <th>Description</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if configlets %}
+                                {% for cfg in configlets[:10] %}
+                                <tr>
+                                    <td>{{ loop.index }}</td>
+                                    <td><code>{{ cfg.name }}</code></td>
+                                    <td><span class="badge bg-primary">{{ cfg.type }}</span></td>
+                                    <td>{{ cfg.lines }}</td>
+                                    <td>{{ cfg.description or 'No description' }}</td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr>
+                                    <td colspan="5" class="text-center text-danger">
+                                        <strong>NO CONFIGLETS FOUND IN TEMPLATE DATA</strong>
+                                    </td>
+                                </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5>API Test</h5>
+            </div>
+            <div class="card-body">
+                <button class="btn btn-primary" onclick="testAPI()">
+                    <i class="bi bi-cloud-arrow-down"></i> Test API Endpoint
+                </button>
+                <pre id="apiResult" class="mt-3 p-3 bg-light" style="display:none;"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5>Actions</h5>
+            </div>
+            <div class="card-body">
+                <a href="{{ url_for('configlets') }}" class="btn btn-success">
+                    <i class="bi bi-arrow-left"></i> Go to Normal Configlets Page
+                </a>
+                <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">
+                    <i class="bi bi-house"></i> Go to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function checkDatabase() {
+    document.getElementById('dbCount').textContent = 'Checking...';
+    fetch('/api/stats')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('dbCount').textContent = data.configlets.total;
+        })
+        .catch(error => {
+            document.getElementById('dbCount').textContent = 'Error: ' + error;
+        });
+}
+
+function testAPI() {
+    const resultElement = document.getElementById('apiResult');
+    resultElement.style.display = 'block';
+    resultElement.textContent = 'Loading...';
+
+    fetch('/api/configlets')
+        .then(response => response.json())
+        .then(data => {
+            resultElement.textContent = JSON.stringify(data, null, 2);
+        })
+        .catch(error => {
+            resultElement.textContent = 'Error: ' + error;
+        });
+}
+
+// Auto-check on page load
+window.addEventListener('load', function() {
+    checkDatabase();
+});
+</script>
+{% endblock %}

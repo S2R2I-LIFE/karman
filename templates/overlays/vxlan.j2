@@ -1,0 +1,19 @@
+!
+! VXLAN Configuration
+!
+{% if vxlan %}
+interface Vxlan1
+   vxlan source-interface {{ vxlan.source_interface }}
+   {% if vxlan.udp_port %}
+   vxlan udp-port {{ vxlan.udp_port }}
+   {% endif %}
+   {% for vlan_map in vxlan.vlan_to_vni_maps %}
+   vxlan vlan {{ vlan_map.vlan }} vni {{ vlan_map.vni }}
+   {% endfor %}
+   {% if vxlan.vrf_to_vni_maps %}
+   {% for vrf_map in vxlan.vrf_to_vni_maps %}
+   vxlan vrf {{ vrf_map.vrf }} vni {{ vrf_map.vni }}
+   {% endfor %}
+   {% endif %}
+!
+{% endif %}

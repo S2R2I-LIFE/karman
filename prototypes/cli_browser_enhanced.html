@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced CLI Browser - Prototype</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <style>
+        :root {
+            --cisco-blue: #049fd9;
+            --syntax-keyword: #0066cc;
+            --syntax-variable: #cc6600;
+            --syntax-optional: #999;
+        }
+
+        .workflow-card {
+            border-left: 4px solid var(--cisco-blue);
+            transition: all 0.2s;
+        }
+
+        .workflow-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            transform: translateY(-2px);
+        }
+
+        .command-doc {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .syntax-box {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            overflow-x: auto;
+        }
+
+        .syntax-keyword { color: #569cd6; }
+        .syntax-variable { color: #ce9178; }
+        .syntax-optional { color: #6a9955; }
+        .syntax-choice { color: #c586c0; }
+
+        .param-table {
+            font-size: 14px;
+        }
+
+        .param-table th {
+            background: var(--cisco-blue);
+            color: white;
+            font-weight: 600;
+        }
+
+        .use-case-badge {
+            background: #e3f2fd;
+            color: #1976d2;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .related-cmd {
+            background: #fff3e0;
+            border-left: 3px solid #ff9800;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+        }
+
+        .workflow-path {
+            background: linear-gradient(90deg, #e3f2fd 0%, #fff 100%);
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .mode-breadcrumb {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .mode-breadcrumb .mode-step {
+            background: var(--cisco-blue);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .troubleshooting-scenario {
+            border: 2px solid #ff9800;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background: #fff8e1;
+        }
+
+        .output-example {
+            background: #263238;
+            color: #aed581;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">
+                <i class="bi bi-terminal"></i> Enhanced CLI Browser - Educational Prototype
+            </span>
+            <span class="badge bg-warning text-dark">PROTOTYPE ONLY</span>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <div class="row">
+            <!-- Left Sidebar - Navigation -->
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h6 class="mb-0"><i class="bi bi-compass"></i> Navigation</h6>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="list-group list-group-flush">
+                            <a href="#workflows" class="list-group-item list-group-item-action active">
+                                <i class="bi bi-diagram-3"></i> Troubleshooting Workflows
+                            </a>
+                            <a href="#by-task" class="list-group-item list-group-item-action">
+                                <i class="bi bi-list-task"></i> Browse by Task
+                            </a>
+                            <a href="#by-protocol" class="list-group-item list-group-item-action">
+                                <i class="bi bi-router"></i> Browse by Protocol
+                            </a>
+                            <a href="#quick-ref" class="list-group-item list-group-item-action">
+                                <i class="bi bi-bookmark-star"></i> Quick Reference
+                            </a>
+                            <a href="#all-modes" class="list-group-item list-group-item-action">
+                                <i class="bi bi-list-ul"></i> All Modes (712)
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Common Workflows -->
+                <div class="card mt-3">
+                    <div class="card-header bg-warning">
+                        <h6 class="mb-0"><i class="bi bi-lightning"></i> Quick Tasks</h6>
+                    </div>
+                    <div class="card-body p-2">
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-sm btn-outline-primary text-start">
+                                <i class="bi bi-bug"></i> Debug BGP neighbor
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary text-start">
+                                <i class="bi bi-ethernet"></i> Configure interface
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary text-start">
+                                <i class="bi bi-shield-check"></i> Check routing table
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary text-start">
+                                <i class="bi bi-activity"></i> Monitor traffic
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content Area -->
+            <div class="col-md-9">
+                <!-- Troubleshooting Workflow Example -->
+                <div class="troubleshooting-scenario">
+                    <h4><i class="bi bi-exclamation-triangle-fill"></i> Scenario: BGP Neighbor Not Establishing</h4>
+                    <p class="mb-2"><strong>Problem:</strong> BGP neighbor relationship stuck in "Active" or "Idle" state</p>
+                    <p class="mb-3"><strong>Goal:</strong> Diagnose and fix BGP neighbor connectivity issues</p>
+
+                    <div class="workflow-path">
+                        <h6>Command Workflow Path:</h6>
+                        <div class="mode-breadcrumb">
+                            <span class="mode-step">1. EnableMode</span>
+                            <i class="bi bi-arrow-right"></i>
+                            <span class="mode-step">2. show bgp summary</span>
+                            <i class="bi bi-arrow-right"></i>
+                            <span class="mode-step">3. show bgp neighbors</span>
+                            <i class="bi bi-arrow-right"></i>
+                            <span class="mode-step">4. ConfigSessionMode</span>
+                            <i class="bi bi-arrow-right"></i>
+                            <span class="mode-step">5. RouterBgpBaseMode</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Command Documentation Example -->
+                <div class="command-doc">
+                    <h5><i class="bi bi-book"></i> Command: address-family</h5>
+
+                    <div class="mb-3">
+                        <span class="use-case-badge"><i class="bi bi-gear"></i> Configuration</span>
+                        <span class="use-case-badge"><i class="bi bi-diagram-3"></i> BGP Routing</span>
+                        <span class="use-case-badge"><i class="bi bi-shield"></i> Requires Privilege 15</span>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-8">
+                            <h6>Syntax:</h6>
+                            <div class="syntax-box">
+<span class="syntax-optional">[no|default]</span> <span class="syntax-keyword">address-family</span> <span class="syntax-variable">&lt;ADDR_FAMILY&gt;</span>
+
+<span class="syntax-optional">[no|default]</span> <span class="syntax-keyword">address-family flow-spec</span> <span class="syntax-variable">&lt;AF&gt;</span>
+
+<span class="syntax-optional">[no|default]</span> <span class="syntax-keyword">address-family link-state</span>
+
+<span class="syntax-optional">[no|default]</span> <span class="syntax-keyword">address-family mvpn-ipv4</span>
+                            </div>
+
+                            <h6 class="mt-3">Description:</h6>
+                            <p>Enters BGP address family configuration mode to configure address-family specific parameters like neighbors, networks, route policies, and redistribution.</p>
+
+                            <h6>When to Use:</h6>
+                            <ul>
+                                <li>Configuring IPv4/IPv6 unicast or multicast routing</li>
+                                <li>Setting up VPNv4/VPNv6 for MPLS L3VPN</li>
+                                <li>Enabling EVPN for VXLAN overlay networks</li>
+                                <li>Configuring route filtering per address family</li>
+                            </ul>
+
+                            <h6>Common Use Cases:</h6>
+                            <div class="alert alert-info">
+                                <strong>Scenario 1:</strong> Configure IPv4 unicast BGP<br>
+                                <code>address-family ipv4 unicast</code>
+                            </div>
+                            <div class="alert alert-info">
+                                <strong>Scenario 2:</strong> Enable EVPN for data center fabric<br>
+                                <code>address-family evpn</code>
+                            </div>
+
+                            <h6>Example Output:</h6>
+                            <div class="output-example">
+Router(config)# router bgp 65000
+Router(config-router)# address-family ipv4 unicast
+Router(config-router-af)# network 10.0.0.0/8
+Router(config-router-af)# neighbor 10.1.1.1 activate
+                            </div>
+                        </div>
+
+                        <div class="col-md-4">
+                            <div class="card">
+                                <div class="card-header bg-secondary text-white">
+                                    <small><strong>Parameters</strong></small>
+                                </div>
+                                <div class="card-body p-0">
+                                    <table class="param-table table table-sm mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>Parameter</th>
+                                                <th>Description</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td><code>ADDR_FAMILY</code></td>
+                                                <td>
+                                                    <small>
+                                                        Address family type:<br>
+                                                        • ipv4 unicast<br>
+                                                        • ipv6 unicast<br>
+                                                        • evpn<br>
+                                                        • vpnv4<br>
+                                                        • vpnv6
+                                                    </small>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>no</code></td>
+                                                <td><small>Remove config</small></td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>default</code></td>
+                                                <td><small>Reset to default</small></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <div class="card mt-3">
+                                <div class="card-header bg-warning">
+                                    <small><strong><i class="bi bi-exclamation-triangle"></i> Important Notes</strong></small>
+                                </div>
+                                <div class="card-body">
+                                    <small>
+                                        <ul class="mb-0">
+                                            <li>Must be in BGP router config mode first</li>
+                                            <li>Changes require "neighbor activate"</li>
+                                            <li>Clear BGP session after major changes</li>
+                                        </ul>
+                                    </small>
+                                </div>
+                            </div>
+
+                            <div class="related-cmd mt-3">
+                                <strong><i class="bi bi-link-45deg"></i> Related Commands:</strong><br>
+                                <small>
+                                    • <a href="#">router bgp</a><br>
+                                    • <a href="#">neighbor activate</a><br>
+                                    • <a href="#">network</a><br>
+                                    • <a href="#">show bgp summary</a>
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Alternative Browse by Task -->
+                <h4 class="mt-4"><i class="bi bi-list-task"></i> Browse by Common Tasks</h4>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="card workflow-card">
+                            <div class="card-body">
+                                <h6><i class="bi bi-ethernet text-primary"></i> Interface Configuration</h6>
+                                <p class="text-muted mb-2"><small>Configure physical and logical interfaces</small></p>
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">IntfConfigMode • 1,408 commands</small>
+                                    <button class="btn btn-sm btn-primary">Explore <i class="bi bi-arrow-right"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="card workflow-card">
+                            <div class="card-body">
+                                <h6><i class="bi bi-diagram-3 text-success"></i> BGP Routing</h6>
+                                <p class="text-muted mb-2"><small>Configure BGP neighbors, policies, route-maps</small></p>
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">RouterBgpBaseMode • 396 commands</small>
+                                    <button class="btn btn-sm btn-primary">Explore <i class="bi bi-arrow-right"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="card workflow-card">
+                            <div class="card-body">
+                                <h6><i class="bi bi-eye text-info"></i> Show/Troubleshooting</h6>
+                                <p class="text-muted mb-2"><small>View status, statistics, and troubleshoot</small></p>
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">EnableMode • 4,516 commands</small>
+                                    <button class="btn btn-sm btn-primary">Explore <i class="bi bi-arrow-right"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="card workflow-card">
+                            <div class="card-body">
+                                <h6><i class="bi bi-shield-check text-danger"></i> OSPF Routing</h6>
+                                <p class="text-muted mb-2"><small>Configure OSPF areas, authentication, summarization</small></p>
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">RouterOspfMode • 112 commands</small>
+                                    <button class="btn btn-sm btn-primary">Explore <i class="bi bi-arrow-right"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Mode Hierarchy Visualization -->
+                <h4 class="mt-4"><i class="bi bi-diagram-2"></i> Mode Navigation Hierarchy</h4>
+                <div class="card">
+                    <div class="card-body">
+                        <div class="alert alert-light">
+                            <strong>Navigation Path Example:</strong>
+                            <div class="mt-2">
+                                <code>enable</code>
+                                <i class="bi bi-arrow-right mx-2"></i>
+                                <code>configure terminal</code>
+                                <i class="bi bi-arrow-right mx-2"></i>
+                                <code>router bgp 65000</code>
+                                <i class="bi bi-arrow-right mx-2"></i>
+                                <code>address-family ipv4 unicast</code>
+                            </div>
+                            <div class="mt-2">
+                                <small class="text-muted">
+                                    <strong>Modes:</strong> EnableMode → ConfigSessionMode → RouterBgpBaseMode → RouterBgpBaseAfIpUniMode
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

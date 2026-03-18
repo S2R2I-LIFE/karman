@@ -1,0 +1,73 @@
+# ── gnmic — Kármán gNMI streaming telemetry (dial-in / pull) ─────────────────
+# Subscribes to management api gnmi (port 6030, eos-native) on each device.
+# Kármán connects FROM 192.168.100.1 (pnet1) via CR's Ethernet5 (192.168.100.2).
+#
+# ROUTING SETUP:
+#   - EVE-NG: Cloud1 (pnet1) connected to CR's Ethernet5
+#   - CR Ethernet5: 192.168.100.2/30, in OSPF area 0
+#   - Kármán server: 192.168.100.1/30 on pnet1
+#   - OSPF redistributes 192.168.100.0/30 as OE2 so all devices route back here
+#
+# To add a device: add an entry under `targets:` with its loopback:6030.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Global credentials (can be overridden per target)
+username: ${GNMIC_USERNAME}
+password: ${GNMIC_PASSWORD}
+
+# Plaintext gRPC — vEOS-lab ships without TLS on TerminAttr by default.
+# Set insecure: false and configure tls-* options for production devices.
+insecure: true
+
+targets:
+  # CR — directly reachable via Management0 (192.168.2.20).
+  # Prerequisite: fix CR's `management api gnmi` to use `vrf default`
+  # and change TerminAttr -grpcaddr to `default/0.0.0.0:6030`.
+  192.168.2.20:6030:
+    name: CR
+
+  # Edge / Provider / Aggregation routers — reachable via loopbacks over OSPF.
+  # Requires the OSPF redistribute static fix on CR (see header above).
+  # Prerequisite on each device: change -grpcaddr from `mgmt/0.0.0.0:6030`
+  # to `default/0.0.0.0:6030` (no mgmt VRF is defined in these configs).
+  10.0.0.1:6030:
+    name: E1
+  10.0.0.2:6030:
+    name: E2
+  10.0.0.3:6030:
+    name: P1
+  10.0.0.4:6030:
+    name: P2
+  10.0.0.5:6030:
+    name: P3
+  10.0.0.6:6030:
+    name: P4
+  10.0.0.8:6030:
+    name: A2
+
+  # Hosts — reachable via data-plane links once OSPF routing is in place.
+  # Prerequisite: remove `management api gnmi` from H1/H2 to resolve the
+  # port 6030 conflict with TerminAttr `-grpcaddr=default/0.0.0.0:6030`.
+  192.168.1.2:6030:
+    name: H1
+  192.168.89.2:6030:
+    name: H2
+
+subscriptions:
+  interface-status:
+    paths:
+      - /Sysdb/interface/status/eth/phy/slice/1/intfStatus
+    origin: eos_native
+    mode: stream
+    stream-mode: sample
+    sample-interval: 30s
+    encoding: json
+
+outputs:
+  prometheus:
+    type: prometheus
+    # Port is set via GNMIC_METRICS_PORT env var (default 9273).
+    # Change in .env if that port is already in use.
+    listen: ":${GNMIC_METRICS_PORT}"
+    metric-prefix: gnmic
+    expiration: 120s

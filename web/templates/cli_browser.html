@@ -1,0 +1,438 @@
+{% extends "base.html" %}
+
+{% block title %}CLI Browser - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">
+            <i class="bi bi-terminal"></i> CLI Command Browser
+            <small class="text-muted">Interactive EOS Command Reference</small>
+        </h1>
+    </div>
+</div>
+
+<!-- Stats Bar -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card border-primary">
+            <div class="card-body text-center">
+                <h6 class="text-muted text-uppercase">CLI Modes</h6>
+                <h2 class="mb-0">{{ stats.modes }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-info">
+            <div class="card-body text-center">
+                <h6 class="text-muted text-uppercase">Commands</h6>
+                <h2 class="mb-0">{{ stats.commands }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-success">
+            <div class="card-body text-center">
+                <h6 class="text-muted text-uppercase">Categories</h6>
+                <h2 class="mb-0">{{ stats.categories }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-warning">
+            <div class="card-body text-center">
+                <h6 class="text-muted text-uppercase">Cached</h6>
+                <h2 class="mb-0">{{ stats.cache_entries }}</h2>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Main Browser Interface -->
+<div class="row">
+    <!-- Mode Selector (Left Panel) -->
+    <div class="col-lg-3 mb-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-list-nested"></i> CLI Modes
+                </h5>
+            </div>
+            <div class="card-body p-0">
+                <!-- Search Box -->
+                <div class="p-3">
+                    <input type="text" id="mode-search" class="form-control form-control-sm"
+                        placeholder="Search modes...">
+                </div>
+
+                <!-- Category Filter -->
+                <div class="px-3 pb-2">
+                    <select id="category-filter" class="form-select form-select-sm">
+                        <option value="">All Categories</option>
+                        {% for category in categories.keys() %}
+                        <option value="{{ category }}">{{ category }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Mode List -->
+                <div id="mode-list" class="list-group list-group-flush" style="max-height: 600px; overflow-y: auto;">
+                    <!-- Getting Started Section -->
+                    <div class="mode-category">
+                        <div class="list-group-item list-group-item-primary py-2">
+                            <strong><i class="bi bi-star-fill"></i> Getting Started</strong>
+                            <span class="badge bg-primary float-end">Common</span>
+                        </div>
+                        <a href="#" class="list-group-item list-group-item-action mode-item mode-item-featured"
+                            data-mode-name="ConfigSessionMode" data-category="Common" data-bs-toggle="tooltip"
+                            title="Main configuration mode - Use this to configure interfaces, VLANs, routing protocols, and general system settings">
+                            <strong>ConfigSessionMode</strong>
+                            <br><small class="text-muted">Main config mode (start here!)</small>
+                        </a>
+                        <a href="#" class="list-group-item list-group-item-action mode-item mode-item-featured"
+                            data-mode-name="EnableMode" data-category="Common" data-bs-toggle="tooltip"
+                            title="Privileged exec mode - Use this for show commands, debugging, and system operations">
+                            <strong>EnableMode</strong>
+                            <br><small class="text-muted">Show commands & troubleshooting</small>
+                        </a>
+                        <a href="#" class="list-group-item list-group-item-action mode-item mode-item-featured"
+                            data-mode-name="RouterBgpBaseMode" data-category="Common" data-bs-toggle="tooltip"
+                            title="BGP routing configuration - Accessed via 'router bgp' from ConfigSessionMode">
+                            <strong>RouterBgpBaseMode</strong>
+                            <br><small class="text-muted">BGP routing (from configure → router bgp)</small>
+                        </a>
+                        <a href="#" class="list-group-item list-group-item-action mode-item mode-item-featured"
+                            data-mode-name="IntfConfigMode" data-category="Common" data-bs-toggle="tooltip"
+                            title="Interface configuration - Accessed via 'interface Ethernet X' from ConfigSessionMode">
+                            <strong>IntfConfigMode</strong>
+                            <br><small class="text-muted">Interface config (from configure → interface)</small>
+                        </a>
+                    </div>
+
+                    <!-- Divider -->
+                    <div class="list-group-item bg-secondary text-white py-1">
+                        <small><strong>All Modes (Grouped by Category)</strong></small>
+                    </div>
+
+                    {% for category, modes in categories.items() %}
+                    <div class="mode-category" data-category="{{ category }}">
+                        <div class="list-group-item list-group-item-secondary py-2">
+                            <strong>{{ category }}</strong>
+                            <span class="badge bg-secondary float-end">{{ modes|length }}</span>
+                        </div>
+                        {% for mode in modes %}
+                        <a href="#" class="list-group-item list-group-item-action mode-item"
+                            data-mode-name="{{ mode.mode_name }}" data-category="{{ category }}"
+                            data-bs-toggle="tooltip" title="{{ mode.description }}">
+                            <small>{{ mode.mode_name }}</small>
+                        </a>
+                        {% endfor %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Command Builder (Right Panel) -->
+    <div class="col-lg-9">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-code-square"></i> Command Builder
+                    <span id="current-mode-badge" class="badge bg-primary ms-2" style="display: none;"></span>
+                </h5>
+            </div>
+            <div class="card-body">
+                <!-- Current Command Display -->
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Current Command:</label>
+                    <div id="current-command" class="border rounded p-3 bg-light font-monospace">
+                        <span class="text-muted">Select a mode to begin...</span>
+                    </div>
+                </div>
+
+                <!-- Token Builder Buttons -->
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Next Options:</label>
+                    <div id="token-buttons" class="d-grid gap-2">
+                        <div class="text-muted text-center py-4">
+                            Select a CLI mode from the left panel
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="d-flex gap-2 mb-3">
+                    <button id="btn-undo" class="btn btn-outline-secondary" disabled>
+                        <i class="bi bi-arrow-counterclockwise"></i> Undo
+                    </button>
+                    <button id="btn-reset" class="btn btn-outline-danger" disabled>
+                        <i class="bi bi-x-circle"></i> Reset
+                    </button>
+                    <button id="btn-validate" class="btn btn-outline-success" disabled>
+                        <i class="bi bi-check-circle"></i> Validate
+                    </button>
+                    <button id="btn-explain" class="btn btn-outline-info" disabled>
+                        <i class="bi bi-info-circle"></i> Explain
+                    </button>
+                    <button id="btn-copy" class="btn btn-outline-primary" disabled>
+                        <i class="bi bi-clipboard"></i> Copy
+                    </button>
+                </div>
+
+                <!-- Command Syntax Reference -->
+                <div id="syntax-reference" class="collapse">
+                    <div class="card bg-light">
+                        <div class="card-body">
+                            <h6 class="card-title">Full Syntax:</h6>
+                            <pre id="syntax-text" class="mb-0 small"></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Explanation Panel -->
+        <div id="explanation-panel" class="card mt-3" style="display: none;">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-lightbulb"></i> AI Explanation</h5>
+                <button class="btn btn-sm btn-close" id="btn-close-explanation"></button>
+            </div>
+            <div class="card-body">
+                <div id="explanation-content" class="markdown-content">
+                    <div class="spinner-border spinner-border-sm" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+                <div class="mt-2">
+                    <small class="text-muted">
+                        Source: <span id="explanation-source"></span>
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast Notifications -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
+    <div id="toast-container"></div>
+</div>
+
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* CLI Browser Specific Styles */
+    #current-command {
+        min-height: 60px;
+        word-break: break-all;
+    }
+
+    .cli-keyword {
+        color: #0066cc;
+        font-weight: 500;
+    }
+
+    .cli-variable {
+        color: #22863a;
+        font-weight: 500;
+    }
+
+    .cli-optional {
+        color: #6a737d;
+        font-style: italic;
+    }
+
+    .cli-choice {
+        color: #6f42c1;
+    }
+
+    .token-btn {
+        text-align: left;
+        font-family: 'Courier New', monospace;
+        font-size: 0.9rem;
+    }
+
+    .token-btn-keyword {
+        border-left: 3px solid #0066cc;
+    }
+
+    .token-btn-variable {
+        border-left: 3px solid #22863a;
+    }
+
+    .token-btn-choice {
+        border-left: 3px solid #6f42c1;
+    }
+
+    .token-btn-optional {
+        border-left: 3px solid #6a737d;
+        opacity: 0.8;
+    }
+
+    .mode-item {
+        font-size: 0.875rem;
+        padding: 0.5rem 1rem;
+    }
+
+    .mode-item:hover {
+        background-color: #f8f9fa;
+    }
+
+    .mode-item.active {
+        background-color: #0d6efd;
+        color: white;
+    }
+
+    .mode-category {
+        display: block;
+    }
+
+    .mode-category.hidden {
+        display: none;
+    }
+
+    #mode-list {
+        scrollbar-width: thin;
+    }
+
+    #mode-list::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    #mode-list::-webkit-scrollbar-track {
+        background: #f1f1f1;
+    }
+
+    #mode-list::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 3px;
+    }
+
+    #mode-list::-webkit-scrollbar-thumb:hover {
+        background: #555;
+    }
+
+    /* Dark Mode Overrides */
+    [data-bs-theme="dark"] .cli-keyword {
+        color: #58a6ff;
+    }
+
+    [data-bs-theme="dark"] .cli-variable {
+        color: #7ee787;
+    }
+
+    [data-bs-theme="dark"] .cli-optional {
+        color: #8b949e;
+    }
+
+    [data-bs-theme="dark"] .cli-choice {
+        color: #d2a8ff;
+    }
+
+    [data-bs-theme="dark"] .token-btn-keyword {
+        border-left: 3px solid #58a6ff;
+    }
+
+    [data-bs-theme="dark"] .token-btn-variable {
+        border-left: 3px solid #7ee787;
+    }
+
+    [data-bs-theme="dark"] .token-btn-choice {
+        border-left: 3px solid #d2a8ff;
+    }
+
+    [data-bs-theme="dark"] .token-btn-optional {
+        border-left: 3px solid #8b949e;
+    }
+
+    [data-bs-theme="dark"] .mode-item:hover {
+        background-color: #1c2128;
+    }
+
+    [data-bs-theme="dark"] .mode-item.active {
+        background-color: #58a6ff;
+        color: #0d1117;
+    }
+
+    [data-bs-theme="dark"] #mode-list::-webkit-scrollbar-track {
+        background: #161b22;
+    }
+
+    [data-bs-theme="dark"] #mode-list::-webkit-scrollbar-thumb {
+        background: #30363d;
+    }
+
+    [data-bs-theme="dark"] #mode-list::-webkit-scrollbar-thumb:hover {
+        background: #484f58;
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/cli-browser.js') }}"></script>
+<script>
+    // Initialize CLI Browser
+    const cliBrowser = new CLIBrowser({
+        apiBase: '/api/cli',
+        currentModeElement: '#current-mode-badge',
+        currentCommandElement: '#current-command',
+        tokenButtonsElement: '#token-buttons',
+        explanationPanelElement: '#explanation-panel',
+        explanationContentElement: '#explanation-content',
+        explanationSourceElement: '#explanation-source'
+    });
+
+    // Mode selection
+    document.querySelectorAll('.mode-item').forEach(item => {
+        item.addEventListener('click', function (e) {
+            e.preventDefault();
+            const modeName = this.dataset.modeName;
+
+            // Update UI
+            document.querySelectorAll('.mode-item').forEach(m => m.classList.remove('active'));
+            this.classList.add('active');
+
+            // Load mode
+            cliBrowser.selectMode(modeName);
+        });
+    });
+
+    // Mode search
+    document.getElementById('mode-search').addEventListener('input', function (e) {
+        const query = e.target.value.toLowerCase();
+        document.querySelectorAll('.mode-item').forEach(item => {
+            const modeName = item.dataset.modeName.toLowerCase();
+            if (modeName.includes(query)) {
+                item.style.display = '';
+            } else {
+                item.style.display = 'none';
+            }
+        });
+    });
+
+    // Category filter
+    document.getElementById('category-filter').addEventListener('change', function (e) {
+        const category = e.target.value;
+        document.querySelectorAll('.mode-category').forEach(cat => {
+            if (!category || cat.dataset.category === category) {
+                cat.classList.remove('hidden');
+            } else {
+                cat.classList.add('hidden');
+            }
+        });
+    });
+
+    // Button handlers
+    document.getElementById('btn-undo').addEventListener('click', () => cliBrowser.undo());
+    document.getElementById('btn-reset').addEventListener('click', () => cliBrowser.reset());
+    document.getElementById('btn-validate').addEventListener('click', () => cliBrowser.validate());
+    document.getElementById('btn-explain').addEventListener('click', () => cliBrowser.explain());
+    document.getElementById('btn-copy').addEventListener('click', () => cliBrowser.copyCommand());
+    document.getElementById('btn-close-explanation').addEventListener('click', () => {
+        document.getElementById('explanation-panel').style.display = 'none';
+    });
+</script>
+{% endblock %}

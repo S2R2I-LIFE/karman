@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Edit {{ configlet.name }} - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('configlets') }}">Configlets</a></li>
+                <li class="breadcrumb-item"><a href="{{ url_for('configlet_detail', name=configlet.name) }}">{{ configlet.name }}</a></li>
+                <li class="breadcrumb-item active">Edit</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-10 mx-auto">
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0"><i class="bi bi-pencil"></i> Edit Configlet: {{ configlet.name }}</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="mb-3">
+                        <label for="config" class="form-label">Configuration *</label>
+                        <textarea class="form-control font-monospace" id="config" name="config" rows="25" required>{{ configlet.config }}</textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="reason" class="form-label">Change Reason</label>
+                        <input type="text" class="form-control" id="reason" name="reason" placeholder="Why are you making this change?">
+                    </div>
+
+                    <hr>
+
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <a href="{{ url_for('configlet_detail', name=configlet.name) }}" class="btn btn-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-save"></i> Save Changes
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

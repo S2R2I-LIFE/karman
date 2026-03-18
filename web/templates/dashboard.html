@@ -1,0 +1,1481 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - {{ app_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.dashboard-card-clickable {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    cursor: pointer;
+}
+
+.dashboard-card-clickable:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+}
+
+/* Keep the card text colors when inside a link */
+a .card h2, a .card h6, a .card small, a .card strong {
+    color: inherit;
+}
+
+a:hover .card h2, a:hover .card h6 {
+    color: inherit;
+}
+
+/* Smooth telemetry updates */
+#telemetryContainer {
+    transition: opacity 0.3s ease-in-out;
+}
+
+/* ── Compact device card ── */
+.compact-device-card {
+    margin-bottom: 0;
+    border-radius: 6px;
+}
+.compact-device-card .card-body {
+    padding: 0.45rem 0.6rem !important;
+}
+.compact-device-card .hostname {
+    font-size: 0.82rem;
+    font-weight: 600;
+    max-width: 140px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.compact-device-card .stat-row {
+    font-size: 0.72rem;
+    gap: 0.5rem;
+}
+.compact-device-card .btn-detail {
+    font-size: 0.68rem;
+    padding: 1px 7px;
+}
+
+/* ── Site group section ── */
+.site-group {
+    border-radius: 8px;
+    border: 1px solid rgba(0,0,0,.08);
+    overflow: hidden;
+}
+.site-group-header {
+    cursor: pointer;
+    user-select: none;
+    padding: 0.5rem 0.85rem;
+    background: rgba(0,0,0,.03);
+    border-bottom: 1px solid rgba(0,0,0,.06);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.88rem;
+    font-weight: 600;
+}
+.site-group-header:hover { background: rgba(0,0,0,.06); }
+.site-group.has-down .site-group-header {
+    background: rgba(220,53,69,.08);
+    border-left: 3px solid #dc3545;
+}
+.site-group.has-warning .site-group-header {
+    background: rgba(255,193,7,.08);
+    border-left: 3px solid #ffc107;
+}
+.site-group-body { padding: 0.6rem; }
+
+[data-bs-theme="dark"] .site-group {
+    border-color: rgba(255,255,255,.08);
+}
+[data-bs-theme="dark"] .site-group-header {
+    background: rgba(255,255,255,.04);
+    border-bottom-color: rgba(255,255,255,.06);
+}
+[data-bs-theme="dark"] .site-group-header:hover { background: rgba(255,255,255,.08); }
+[data-bs-theme="dark"] .site-group.has-down .site-group-header {
+    background: rgba(220,53,69,.15);
+}
+[data-bs-theme="dark"] .site-group.has-warning .site-group-header {
+    background: rgba(255,193,7,.12);
+}
+
+/* ── Status dots (custom group collapsed view) ── */
+.status-dots-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    align-items: center;
+    margin-top: 0.3rem;
+}
+.status-dot {
+    display: inline-block;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    cursor: default;
+    flex-shrink: 0;
+    transition: transform 0.15s;
+}
+.status-dot:hover { transform: scale(1.4); }
+.status-dot.dot-up      { background: #198754; box-shadow: 0 0 4px rgba(25,135,84,.6); }
+.status-dot.dot-down    { background: #dc3545; box-shadow: 0 0 4px rgba(220,53,69,.7); }
+.status-dot.dot-warn    { background: #ffc107; box-shadow: 0 0 4px rgba(255,193,7,.6); }
+.status-dot.dot-unknown { background: #6c757d; }
+
+/* Priority alert strip on DOWN cards */
+.device-card-down {
+    border-left: 3px solid #dc3545 !important;
+}
+.device-card-warning {
+    border-left: 3px solid #ffc107 !important;
+}
+
+/* Temperature badge — dark text in dark mode (warning = yellow bg, white text unreadable) */
+[data-bs-theme="dark"] .temp-toggle.bg-warning {
+    color: #000 !important;
+}
+
+/* ── Dashboard section collapse headers ── */
+.dash-section-header {
+    display: flex;
+    align-items: center;
+    padding: 0.3rem 0.1rem;
+    margin-bottom: 0.6rem;
+    border-bottom: 1px solid rgba(0,0,0,.1);
+    cursor: pointer;
+    user-select: none;
+}
+.dash-section-header:hover { opacity: 0.75; }
+.dash-section-title {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--bs-secondary-color, #6c757d);
+}
+[data-bs-theme="dark"] .dash-section-header {
+    border-bottom-color: rgba(255,255,255,.1);
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-1 help-title" data-help-key="dashboard" onclick="toggleHelpPanel('dashboard')">
+            <i class="bi bi-speedometer2"></i> Dashboard
+            <small class="text-muted">Network Overview</small>
+            <i class="bi bi-chevron-down ms-2 help-chev" id="help-chev-dashboard"></i>
+        </h1>
+        <div id="help-body-dashboard" class="help-body-inline mb-3">
+            <div class="row g-3">
+                <div class="col-md-5">
+                    <p class="text-muted">The <strong>Dashboard</strong> is your live network overview. It polls every device every 30 seconds and displays real-time telemetry — reachability, CPU, memory, temperature, and interface counts — without you having to open each device individually.</p>
+                    <p class="text-muted">Devices are grouped by <strong>site prefix</strong> (the leading segment of the hostname, e.g. <code>DC1</code> from <code>DC1-spine1</code>). Sites with DOWN or degraded devices are automatically expanded and pinned to the top.</p>
+                </div>
+                <div class="col-md-7">
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <div class="help-tip"><i class="bi bi-key text-warning"></i><span><strong>Credentials</strong> — set your device username/password once per session. They are stored only in the browser and never sent to the server until a poll runs.</span></div>
+                            <div class="help-tip"><i class="bi bi-sort-down-alt text-primary"></i><span><strong>Sort</strong> — order devices by priority, hostname, CPU, memory, temperature, or interface-down count.</span></div>
+                            <div class="help-tip"><i class="bi bi-diagram-3 text-secondary"></i><span><strong>Group</strong> — choose flat (no grouping), auto (group by hostname prefix), or custom (your named groups). Custom groups show status dots when collapsed.</span></div>
+                        </div>
+                        <div class="col-6">
+                            <div class="help-tip"><i class="bi bi-list-ul text-secondary"></i><span><strong>Compact / Normal</strong> — switch between a dense 4-per-row card layout and a detailed 2-per-row view.</span></div>
+                            <div class="help-tip"><i class="bi bi-thermometer-half text-danger"></i><span><strong>Temperature</strong> — click any temperature badge to toggle between °C and °F across all cards.</span></div>
+                            <div class="help-tip"><i class="bi bi-chevron-up text-secondary"></i><span><strong>Sections</strong> — each panel (Summary, Telemetry, Charts, Actions) can be collapsed independently. State is saved per browser.</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="dash-section-header" onclick="toggleSection('stats')" title="Toggle Stats">
+    <span class="dash-section-title"><i class="bi bi-bar-chart-line me-1"></i>Summary</span>
+    <i class="bi bi-chevron-up ms-auto" id="section-stats-chev"></i>
+</div>
+<div id="section-stats" class="collapse show">
+<div class="row">
+    <div class="col-md-3 mb-4">
+        <a href="{{ url_for('devices') }}" class="text-decoration-none">
+            <div class="card border-primary dashboard-card-clickable">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="text-muted text-uppercase">Total Devices</h6>
+                            <h2 class="mb-0">{{ total_devices }}</h2>
+                            <small class="text-success">
+                                <i class="bi bi-check-circle"></i> Active
+                            </small>
+                        </div>
+                        <div class="text-primary">
+                            <i class="bi bi-hdd-network" style="font-size: 3rem;"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer">
+                    <div class="row text-center">
+                        <div class="col-6 border-end">
+                            <small class="text-muted">CVP</small>
+                            <div><strong>{{ cvp_managed }}</strong></div>
+                        </div>
+                        <div class="col-6">
+                            <small class="text-muted">Custom</small>
+                            <div><strong>{{ custom_managed }}</strong></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <div class="col-md-3 mb-4">
+        <a href="{{ url_for('configlets') }}" class="text-decoration-none">
+            <div class="card border-info dashboard-card-clickable">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="text-muted text-uppercase">Configlets</h6>
+                            <h2 class="mb-0">{{ total_configlets }}</h2>
+                            <small class="text-info">
+                                <i class="bi bi-files"></i> Ready
+                            </small>
+                        </div>
+                        <div class="text-info">
+                            <i class="bi bi-file-earmark-code" style="font-size: 3rem;"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer">
+                    <span class="text-decoration-none">
+                        View All <i class="bi bi-arrow-right"></i>
+                    </span>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <div class="col-md-3 mb-4">
+        <a href="{{ url_for('tasks', status='pending') }}" class="text-decoration-none">
+            <div class="card border-warning dashboard-card-clickable">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="text-muted text-uppercase">Pending Tasks</h6>
+                            <h2 class="mb-0">{{ pending_tasks }}</h2>
+                            <small class="text-warning">
+                                <i class="bi bi-hourglass-split"></i> Awaiting
+                            </small>
+                        </div>
+                        <div class="text-warning">
+                            <i class="bi bi-list-check" style="font-size: 3rem;"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer">
+                    <span class="text-decoration-none">
+                        Review Tasks <i class="bi bi-arrow-right"></i>
+                    </span>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <div class="col-md-3 mb-4">
+        <div class="card border-success">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="text-muted text-uppercase">System Status</h6>
+                        <h2 class="mb-0 text-success">
+                            <i class="bi bi-check-circle-fill"></i>
+                        </h2>
+                        <small class="text-success">All Systems Go</small>
+                    </div>
+                    <div class="text-success">
+                        <i class="bi bi-shield-check" style="font-size: 3rem;"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer">
+                <small class="text-muted">Last updated: just now</small>
+            </div>
+        </div>
+    </div>
+</div>
+</div><!-- /section-stats -->
+
+<!-- Device Telemetry -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="mb-0" id="telemetryHeader"><i class="bi bi-activity"></i> Device Telemetry</h5>
+                    <small class="text-muted" id="lastRefreshTime">Loading...</small>
+                </div>
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <!-- Grouping mode toggle -->
+                    <div class="btn-group btn-group-sm" role="group" title="Grouping mode">
+                        <button id="groupFlatBtn"   class="btn btn-outline-secondary" onclick="setGroupMode('flat')"   title="No grouping"><i class="bi bi-list"></i></button>
+                        <button id="groupAutoBtn"   class="btn btn-outline-secondary active" onclick="setGroupMode('auto')"   title="Group by site prefix"><i class="bi bi-diagram-3"></i></button>
+                        <button id="groupCustomBtn" class="btn btn-outline-secondary" onclick="setGroupMode('custom')" title="Custom groups"><i class="bi bi-collection"></i></button>
+                    </div>
+                    <!-- Manage custom groups -->
+                    <button class="btn btn-sm btn-outline-secondary" onclick="openManageGroups()" title="Manage custom groups">
+                        <i class="bi bi-pencil-square"></i> <span class="d-none d-md-inline">Groups</span>
+                    </button>
+                    <!-- Card size toggle -->
+                    <div class="btn-group btn-group-sm" role="group" title="Card size">
+                        <button id="sizeNormalBtn" class="btn btn-outline-secondary"
+                                onclick="setCardSize('normal')" title="Normal cards">
+                            <i class="bi bi-grid-3x3-gap"></i>
+                        </button>
+                        <button id="sizeCompactBtn" class="btn btn-outline-secondary active"
+                                onclick="setCardSize('compact')" title="Compact cards">
+                            <i class="bi bi-list-ul"></i>
+                        </button>
+                    </div>
+                    <!-- Sort mode -->
+                    <div class="input-group input-group-sm" style="width:auto;" title="Sort devices">
+                        <span class="input-group-text"><i class="bi bi-sort-down-alt"></i> <span class="d-none d-md-inline ms-1">Sort</span></span>
+                        <select id="sortSelect" class="form-select form-select-sm" style="min-width:110px;"
+                                onchange="setSortMode(this.value)">
+                            <option value="priority">Priority</option>
+                            <option value="hostname_az">Name A → Z</option>
+                            <option value="hostname_za">Name Z → A</option>
+                            <option value="cpu">CPU ↓</option>
+                            <option value="memory">Memory ↓</option>
+                            <option value="temp">Temp ↓</option>
+                            <option value="iface_down">Interfaces Down ↓</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="showCredentialsModal()">
+                        <i class="bi bi-key"></i> <span class="d-none d-md-inline">Credentials</span>
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary" onclick="refreshTelemetry()">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="toggleSection('telemetry')" title="Collapse section">
+                        <i class="bi bi-chevron-up" id="section-telemetry-chev"></i>
+                    </button>
+                </div>
+            </div>
+            <div id="section-telemetry" class="collapse show">
+            <div class="card-body">
+                <div id="telemetryContainer">
+                    <div class="text-center text-muted">
+                        <div class="spinner-border spinner-border-sm me-2"></div>
+                        Loading telemetry...
+                    </div>
+                </div>
+            </div>
+            </div><!-- /section-telemetry -->
+        </div>
+    </div>
+</div>
+
+<!-- Charts and Recent Activity -->
+<div class="dash-section-header" onclick="toggleSection('charts')" title="Toggle Charts & Activity">
+    <span class="dash-section-title"><i class="bi bi-pie-chart me-1"></i>Charts &amp; Activity</span>
+    <i class="bi bi-chevron-up ms-auto" id="section-charts-chev"></i>
+</div>
+<div id="section-charts" class="collapse show">
+<div class="row">
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-pie-chart"></i> Device Distribution by Role
+                </h5>
+            </div>
+            <div class="card-body">
+                <div style="max-width: 260px; margin: 0 auto;">
+                    <canvas id="deviceRoleChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-clock-history"></i> Recent Activity
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if recent_tasks %}
+                    <div class="list-group">
+                        {% for task in recent_tasks %}
+                        <div class="list-group-item">
+                            <div class="d-flex w-100 justify-content-between">
+                                <h6 class="mb-1">
+                                    <span class="badge bg-{{ 'success' if task.status == 'completed' else 'warning' if task.status == 'pending' else 'secondary' }}">
+                                        {{ task.status }}
+                                    </span>
+                                    Task #{{ task.task_id }}
+                                </h6>
+                                <small>{{ task.created_at|timeago }}</small>
+                            </div>
+                            <p class="mb-1">{{ task.description }}</p>
+                            <small class="text-muted">{{ task.created_by }}</small>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted text-center">No recent activity</p>
+                {% endif %}
+            </div>
+            <div class="card-footer">
+                <a href="{{ url_for('tasks') }}" class="btn btn-sm btn-outline-primary">
+                    View All Tasks <i class="bi bi-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+</div><!-- /section-charts -->
+
+<!-- Quick Actions -->
+<div class="row">
+    <div class="col-12 mb-4">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-lightning"></i> Quick Actions</h5>
+                <button class="btn btn-sm btn-outline-secondary" onclick="toggleSection('actions')" title="Collapse section">
+                    <i class="bi bi-chevron-up" id="section-actions-chev"></i>
+                </button>
+            </div>
+            <div id="section-actions" class="collapse show">
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-3 mb-3">
+                        <a href="{{ url_for('add_device') }}" class="btn btn-outline-primary btn-lg w-100">
+                            <i class="bi bi-plus-circle d-block" style="font-size: 2rem;"></i>
+                            Add Device
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <a href="{{ url_for('create_configlet') }}" class="btn btn-outline-info btn-lg w-100">
+                            <i class="bi bi-file-earmark-plus d-block" style="font-size: 2rem;"></i>
+                            New Configlet
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <a href="{{ url_for('config_builder') }}" class="btn btn-outline-success btn-lg w-100">
+                            <i class="bi bi-tools d-block" style="font-size: 2rem;"></i>
+                            Build Config
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <a href="{{ url_for('create_task') }}" class="btn btn-outline-warning btn-lg w-100">
+                            <i class="bi bi-clipboard-check d-block" style="font-size: 2rem;"></i>
+                            Create Task
+                        </a>
+                    </div>
+                </div>
+                <div class="row text-center mt-3">
+                    <div class="col-12 mb-2">
+                        <hr>
+                    </div>
+                    <div class="col-md-6 offset-md-3 mb-3">
+                        <a href="{{ url_for('cli_browser') }}" class="btn btn-outline-primary btn-lg w-100" style="border: 2px solid;">
+                            <i class="bi bi-terminal d-block" style="font-size: 2rem;"></i>
+                            <strong>CLI Browser</strong>
+                            <br><small>Interactive command reference with 20K+ documented commands</small>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Custom Tiles -->
+                <div id="custom-tiles-container" class="row text-center mt-4" style="display: none;">
+                    <div class="col-12 mb-2">
+                        <h5><i class="bi bi-grid-3x3"></i> Quick Launch</h5>
+                    </div>
+                    <div id="custom-tiles-dashboard"></div>
+                </div>
+            </div>
+            </div><!-- /section-actions -->
+        </div>
+    </div>
+</div>
+
+<!-- Manage Device Groups Modal -->
+<div class="modal fade" id="manageGroupsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-collection"></i> Manage Device Groups</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Existing groups list -->
+                <div id="groupsList" class="mb-4"></div>
+
+                <!-- Create / Edit form -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span id="groupFormTitle"><i class="bi bi-plus-circle"></i> New Group</span>
+                        <button class="btn btn-sm btn-outline-secondary d-none" id="groupFormCancelEdit"
+                                onclick="cancelEditGroup()">Cancel Edit</button>
+                    </div>
+                    <div class="card-body">
+                        <input type="hidden" id="editingGroupId" value="">
+                        <div class="mb-3">
+                            <label class="form-label">Group Name</label>
+                            <input type="text" class="form-control" id="groupNameInput"
+                                   placeholder="e.g. Server Room A, Floor 2, Data Center…">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Devices in this group</label>
+                            <div class="input-group input-group-sm mb-2">
+                                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                <input type="text" class="form-control" id="deviceSearchInput"
+                                       placeholder="Filter devices…" oninput="filterGroupDevices()">
+                            </div>
+                            <div id="deviceCheckboxList"
+                                 style="max-height:260px;overflow-y:auto;border:1px solid rgba(0,0,0,.15);border-radius:6px;padding:0.5rem;">
+                                <span class="text-muted small">Loading devices…</span>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="saveGroup()">
+                            <i class="bi bi-floppy"></i> Save Group
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Device Credentials Modal -->
+<div class="modal fade" id="credentialsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-key"></i> Device Credentials</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted">Enter default credentials for device access. These will be used for telemetry collection and other device operations.</p>
+                <div class="mb-3">
+                    <label for="deviceUsername" class="form-label">Username</label>
+                    <input type="text" class="form-control" id="deviceUsername" placeholder="admin" value="admin">
+                </div>
+                <div class="mb-3">
+                    <label for="devicePassword" class="form-label">Password</label>
+                    <input type="password" class="form-control" id="devicePassword" placeholder="Leave empty if no password">
+                    <div class="form-text">Leave empty for devices with no password</div>
+                </div>
+                <div class="alert alert-info small mb-0">
+                    <i class="bi bi-info-circle"></i> Credentials are stored in your browser session only and are not saved permanently.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveCredentials()">Save & Refresh</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// ── Dashboard section collapse ─────────────────────────────────────────────────
+const DASH_SECTIONS = ['stats', 'telemetry', 'charts', 'actions'];
+
+function toggleSection(id) {
+    const el = document.getElementById('section-' + id);
+    if (!el) return;
+    const inst = bootstrap.Collapse.getOrCreateInstance(el, { toggle: false });
+    el.classList.contains('show') ? inst.hide() : inst.show();
+}
+
+function initSectionCollapse() {
+    DASH_SECTIONS.forEach(id => {
+        const el = document.getElementById('section-' + id);
+        if (!el) return;
+
+        // Restore saved collapsed state (no animation on load)
+        if (localStorage.getItem('dashSection_' + id) === 'hidden') {
+            el.classList.remove('show');
+            const chev = document.getElementById('section-' + id + '-chev');
+            if (chev) chev.className = 'bi bi-chevron-down';
+        }
+
+        el.addEventListener('shown.bs.collapse', () => {
+            localStorage.setItem('dashSection_' + id, 'shown');
+            const chev = document.getElementById('section-' + id + '-chev');
+            if (chev) chev.className = 'bi bi-chevron-up';
+        });
+        el.addEventListener('hidden.bs.collapse', () => {
+            localStorage.setItem('dashSection_' + id, 'hidden');
+            const chev = document.getElementById('section-' + id + '-chev');
+            if (chev) chev.className = 'bi bi-chevron-down';
+        });
+    });
+}
+
+// Load and display custom tiles
+document.addEventListener('DOMContentLoaded', function() {
+    const tiles = JSON.parse(localStorage.getItem('customTiles') || '[]');
+
+    if (tiles.length > 0) {
+        const container = document.getElementById('custom-tiles-container');
+        const tilesDiv = document.getElementById('custom-tiles-dashboard');
+
+        container.style.display = 'block';
+
+        tilesDiv.innerHTML = tiles.map(tile => {
+            const colorClass = `btn-${tile.color || 'primary'}`;
+            const icon = tile.icon || 'bi-link';
+            const target = tile.url.startsWith('http') ? '_blank' : '_self';
+
+            return `
+                <div class="col-md-3 col-sm-6 mb-3">
+                    <a href="${tile.url}" target="${target}" class="btn ${colorClass} btn-lg w-100" style="border: 2px solid;">
+                        <i class="bi ${icon} d-block" style="font-size: 2rem;"></i>
+                        <strong>${tile.name}</strong>
+                        <br><small>${tile.url.length > 30 ? tile.url.substring(0, 30) + '...' : tile.url}</small>
+                    </a>
+                </div>
+            `;
+        }).join('');
+    }
+});
+
+// Credentials functions
+function showCredentialsModal() {
+    // Clean up any stale backdrop/body state from a previous lockup
+    document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+    document.body.classList.remove('modal-open');
+    document.body.style.removeProperty('overflow');
+    document.body.style.removeProperty('padding-right');
+
+    const modalElement = document.getElementById('credentialsModal');
+
+    // Dispose any existing instance so we always start clean
+    const existing = bootstrap.Modal.getInstance(modalElement);
+    if (existing) existing.dispose();
+
+    const modal = new bootstrap.Modal(modalElement);
+
+    // Load saved credentials from sessionStorage
+    const savedUsername = sessionStorage.getItem('deviceUsername') || 'admin';
+    const savedPassword = sessionStorage.getItem('devicePassword') || '';
+
+    document.getElementById('deviceUsername').value = savedUsername;
+    document.getElementById('devicePassword').value = savedPassword;
+
+    // Force cleanup after modal hides (handles X, Cancel, backdrop click, Escape)
+    modalElement.addEventListener('hidden.bs.modal', function cleanup() {
+        modalElement.removeEventListener('hidden.bs.modal', cleanup);
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('overflow');
+        document.body.style.removeProperty('padding-right');
+        const inst = bootstrap.Modal.getInstance(modalElement);
+        if (inst) inst.dispose();
+    });
+
+    modal.show();
+}
+
+function saveCredentials() {
+    const username = document.getElementById('deviceUsername').value;
+    const password = document.getElementById('devicePassword').value;
+
+    // Save to sessionStorage
+    sessionStorage.setItem('deviceUsername', username);
+    sessionStorage.setItem('devicePassword', password);
+
+    // Close modal — the hidden.bs.modal listener above handles full cleanup
+    const modalElement = document.getElementById('credentialsModal');
+    const modal = bootstrap.Modal.getInstance(modalElement);
+    if (modal) modal.hide();
+
+    // Refresh telemetry with new credentials
+    refreshTelemetry();
+}
+
+// Telemetry functions
+let refreshTimeout = null;
+let statusTimeout = null;
+let cachedDevices = []; // Cache full telemetry data
+
+// Fast status check using ICMP ping (runs every 10 seconds)
+function refreshDeviceStatus() {
+    // Clear any existing scheduled status check
+    if (statusTimeout) {
+        clearTimeout(statusTimeout);
+        statusTimeout = null;
+    }
+
+    fetch('/api/devices/status')
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                updateDeviceStatus(data.devices);
+            }
+        })
+        .catch(error => {
+            console.error('Status check error:', error);
+        })
+        .finally(() => {
+            // Schedule next status check 10 seconds from now
+            statusTimeout = setTimeout(refreshDeviceStatus, 10000);
+        });
+}
+
+function updateDeviceStatus(statusData) {
+    let anyChanged = false;
+
+    statusData.forEach(status => {
+        const cachedDevice = cachedDevices.find(d => d.hostname === status.hostname);
+        if (cachedDevice && cachedDevice.telemetry) {
+            // The fast TCP check is authoritative for DOWN only.
+            // It must not promote a device to UP — that requires full telemetry
+            // to confirm. This prevents false UP flashes for gNMI devices where
+            // port 6030 is open (built-in EOS gNMI) but TerminAttr is not running,
+            // causing the TCP check and telemetry to disagree.
+            if (cachedDevice.telemetry.reachable && !status.reachable) {
+                anyChanged = true;
+                cachedDevice.telemetry.reachable = false;
+                cachedDevice.telemetry.error = cachedDevice.telemetry.error || 'Device unreachable';
+            }
+        }
+    });
+
+    // Full re-render when any device changed state so site-group header
+    // counts (UP/DOWN badges) stay in sync with card badges.
+    if (anyChanged && cachedDevices.length > 0) {
+        displayTelemetry(cachedDevices);
+    }
+}
+
+function refreshTelemetry() {
+    // Clear any existing scheduled refresh
+    if (refreshTimeout) {
+        clearTimeout(refreshTimeout);
+        refreshTimeout = null;
+    }
+
+    // Add subtle loading indicator to header (instead of clearing data)
+    const header = document.getElementById('telemetryHeader');
+    const originalHeaderHTML = header.innerHTML;
+    header.innerHTML = '<i class="bi bi-activity"></i> Device Telemetry <span class="spinner-border spinner-border-sm ms-2"></span>';
+
+    // Get credentials from sessionStorage
+    const username = sessionStorage.getItem('deviceUsername');
+    const password = sessionStorage.getItem('devicePassword');
+
+    const url = '/api/telemetry/devices';
+
+    // Abort the fetch if the backend hasn't responded within 50 s
+    const controller = new AbortController();
+    const fetchDeadline = setTimeout(() => controller.abort(), 50000);
+
+    fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: username || '', password: password || '' }),
+            signal: controller.signal
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                displayTelemetry(data.devices);
+            } else if (data.error && data.error.includes('auth')) {
+                showCredentialsModal();
+            }
+        })
+        .catch(error => {
+            if (error.name === 'AbortError') {
+                // Timed out — keep whatever is already displayed, just reschedule
+                console.warn('Telemetry fetch timed out after 50s — retrying shortly');
+            } else {
+                console.error('Telemetry error:', error);
+                const container = document.getElementById('telemetryContainer');
+                if (!container.innerHTML || container.innerHTML.trim() === '') {
+                    container.innerHTML = '<div class="alert alert-warning">Failed to load telemetry. <button class="btn btn-sm btn-primary ms-2" onclick="showCredentialsModal()">Set Credentials</button></div>';
+                }
+            }
+        })
+        .finally(() => {
+            clearTimeout(fetchDeadline);
+            header.innerHTML = originalHeaderHTML;
+            refreshTimeout = setTimeout(refreshTelemetry, 30000);
+        });
+}
+
+// ── View state ────────────────────────────────────────────────────────────────
+let tempUnit    = 'F';            // temperature unit default
+let groupMode   = 'auto';         // 'flat' | 'auto' | 'custom'
+let cardSize    = 'compact';      // 'normal' | 'compact'
+let sortMode    = 'priority';     // current sort selection
+const siteCollapsed  = new Map(); // site → bool (persists across re-renders)
+const groupCollapsed = new Map(); // group_id → bool
+
+// Custom groups loaded from API
+let deviceGroups = [];
+
+function toDisplay(celsius) {
+    if (tempUnit === 'F') return { val: Math.round(celsius * 9 / 5 + 32), unit: '°F' };
+    return { val: celsius, unit: '°C' };
+}
+function toggleTempUnit() {
+    tempUnit = tempUnit === 'F' ? 'C' : 'F';
+    displayTelemetry(cachedDevices);
+}
+function setGroupMode(mode) {
+    groupMode = mode;
+    localStorage.setItem('dashGroupMode', mode);
+    document.getElementById('groupFlatBtn').classList.toggle('active', mode === 'flat');
+    document.getElementById('groupAutoBtn').classList.toggle('active', mode === 'auto');
+    document.getElementById('groupCustomBtn').classList.toggle('active', mode === 'custom');
+    if (mode === 'custom' && deviceGroups.length === 0) {
+        loadDeviceGroups().then(() => displayTelemetry(cachedDevices));
+        return;
+    }
+    displayTelemetry(cachedDevices);
+}
+function setCardSize(size) {
+    cardSize = size;
+    document.getElementById('sizeNormalBtn').classList.toggle('active', size === 'normal');
+    document.getElementById('sizeCompactBtn').classList.toggle('active', size === 'compact');
+    displayTelemetry(cachedDevices);
+}
+function toggleSite(siteId) {
+    const body   = document.getElementById('site-body-' + siteId);
+    const chev   = document.getElementById('site-chev-' + siteId);
+    const hidden = body.style.display === 'none';
+    body.style.display = hidden ? '' : 'none';
+    chev.className = hidden ? 'bi bi-chevron-up' : 'bi bi-chevron-down';
+    siteCollapsed.set(siteId, !hidden);
+}
+function toggleCustomGroup(groupId) {
+    const body   = document.getElementById('cg-body-' + groupId);
+    const chev   = document.getElementById('cg-chev-' + groupId);
+    const dots   = document.getElementById('cg-dots-' + groupId);
+    const hidden = body.style.display === 'none';
+    body.style.display = hidden ? '' : 'none';
+    if (dots) dots.style.display = hidden ? 'none' : '';
+    chev.className = hidden ? 'bi bi-chevron-up' : 'bi bi-chevron-down';
+    groupCollapsed.set(groupId, !hidden);
+}
+function setSortMode(mode) {
+    sortMode = mode;
+    localStorage.setItem('dashSortMode', mode);
+    displayTelemetry(cachedDevices);
+}
+
+// ── Sort comparators ───────────────────────────────────────────────────────────
+function sortDevices(devices) {
+    const arr = [...devices];
+    const avgTemp = d => {
+        const sensors = d.telemetry.temperature?.sensors;
+        if (!sensors?.length) return 0;
+        return sensors.reduce((s, x) => s + x.temperature, 0) / sensors.length;
+    };
+    switch (sortMode) {
+        case 'hostname_az':
+            return arr.sort((a, b) => a.hostname.localeCompare(b.hostname));
+        case 'hostname_za':
+            return arr.sort((a, b) => b.hostname.localeCompare(a.hostname));
+        case 'cpu':
+            return arr.sort((a, b) => (b.telemetry.system?.cpu_percent || 0) - (a.telemetry.system?.cpu_percent || 0));
+        case 'memory':
+            return arr.sort((a, b) => (b.telemetry.system?.memory_percent || 0) - (a.telemetry.system?.memory_percent || 0));
+        case 'temp':
+            return arr.sort((a, b) => avgTemp(b) - avgTemp(a));
+        case 'iface_down':
+            return arr.sort((a, b) => (b.telemetry.interfaces?.down || 0) - (a.telemetry.interfaces?.down || 0));
+        case 'priority':
+        default:
+            return arr.sort((a, b) => devicePriority(a) - devicePriority(b));
+    }
+}
+
+// ── Priority scoring (lower = more urgent) ────────────────────────────────────
+function devicePriority(device) {
+    const t = device.telemetry;
+    if (!t.reachable) return 0;
+    if (t.temperature?.sensors?.some(s => s.status === 'critical')) return 1;
+    if (t.temperature?.sensors?.some(s => s.status === 'warning'))  return 2;
+    if ((t.interfaces?.down || 0) > 0) return 3;
+    return 4;
+}
+
+// ── Site extraction (first segment before - or _) ────────────────────────────
+function getSite(hostname) {
+    const m = hostname.match(/^([A-Za-z0-9]+)/);
+    return m ? m[1].toUpperCase() : 'OTHER';
+}
+
+// ── Card builders ─────────────────────────────────────────────────────────────
+function buildDeviceStats(device) {
+    const t = device.telemetry;
+    let tempStatus = 'secondary', tempIcon = 'thermometer-half', avgTemp = 0;
+    if (t.temperature?.sensors?.length > 0) {
+        avgTemp = Math.round(t.temperature.sensors.reduce((s, x) => s + x.temperature, 0) / t.temperature.sensors.length);
+        const crit = t.temperature.sensors.filter(s => s.status === 'critical').length;
+        const warn = t.temperature.sensors.filter(s => s.status === 'warning').length;
+        if (crit > 0)      { tempStatus = 'danger';  tempIcon = 'thermometer-high'; }
+        else if (warn > 0) { tempStatus = 'warning'; tempIcon = 'thermometer-high'; }
+        else               { tempStatus = 'success'; }
+    }
+    let topInterfaces = [];
+    if (t.interface_rates) {
+        topInterfaces = Object.entries(t.interface_rates)
+            .map(([name, rates]) => ({ name, total_bps: rates.in_bps + rates.out_bps }))
+            .sort((a, b) => b.total_bps - a.total_bps).slice(0, 3);
+    }
+    let totalErrors = 0;
+    if (t.interface_counters) {
+        totalErrors = Object.values(t.interface_counters)
+            .reduce((s, c) => s + (c.in_errors || 0) + (c.out_errors || 0), 0);
+    }
+    return { tempStatus, tempIcon, avgTemp, topInterfaces, totalErrors };
+}
+
+function normalCard(device) {
+    const t = device.telemetry;
+    const statusClass = t.reachable ? 'success' : 'danger';
+    const statusIcon  = t.reachable ? 'check-circle-fill' : 'x-circle-fill';
+    const p = devicePriority(device);
+    const borderClass = p === 0 ? 'device-card-down' : p <= 2 ? 'device-card-warning' : '';
+    const { tempStatus, tempIcon, avgTemp, topInterfaces, totalErrors } = buildDeviceStats(device);
+    const td = toDisplay(avgTemp);
+    return `
+        <div class="col-lg-6 mb-3">
+            <div class="card h-100 ${borderClass}" data-device-hostname="${device.hostname}">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-hdd-network"></i> <strong>${device.hostname}</strong></span>
+                    <span class="badge bg-${statusClass} device-status-badge">
+                        <i class="bi bi-${statusIcon}"></i> ${t.reachable ? 'UP' : 'DOWN'}
+                    </span>
+                </div>
+                <div class="card-body">
+                    <small class="text-muted d-block mb-3"><i class="bi bi-globe"></i> ${device.ip}</small>
+                    ${t.reachable ? `
+                        <div class="row text-center mb-3">
+                            <div class="col-3">
+                                <small class="text-muted d-block">Version</small>
+                                <strong style="font-size:0.9em;">${t.version_info?.version || 'N/A'}</strong>
+                            </div>
+                            <div class="col-3">
+                                <small class="text-muted d-block">CPU</small>
+                                <strong style="font-size:0.9em;">${t.system?.cpu_percent || 0}%</strong>
+                            </div>
+                            <div class="col-3">
+                                <small class="text-muted d-block">Memory</small>
+                                <strong style="font-size:0.9em;">${t.system?.memory_percent || 0}%</strong>
+                            </div>
+                            <div class="col-3">
+                                <small class="text-muted d-block">Temp</small>
+                                <span class="badge bg-${tempStatus} temp-toggle" onclick="toggleTempUnit()"
+                                      title="Click to switch °C / °F" style="cursor:pointer;">
+                                    <i class="bi bi-${tempIcon}"></i> ${td.val}${td.unit}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="mb-2">
+                            <small class="text-muted"><i class="bi bi-ethernet"></i> <strong>Interfaces:</strong></small>
+                            <span class="badge bg-success">${t.interfaces?.up || 0} UP</span>
+                            <span class="badge bg-danger">${t.interfaces?.down || 0} DOWN</span>
+                            ${totalErrors > 0 ? `<span class="badge bg-warning text-dark">${totalErrors} Errors</span>` : ''}
+                        </div>
+                        ${topInterfaces.length > 0 ? `
+                            <div class="mt-2">
+                                <small class="text-muted"><i class="bi bi-bar-chart"></i> <strong>Top Interfaces:</strong></small>
+                                <div class="small">
+                                    ${topInterfaces.map(i => {
+                                        const mbps = (i.total_bps / 1e6).toFixed(1);
+                                        return `<div class="d-flex justify-content-between"><span><code>${i.name}</code></span><span class="text-primary">${mbps} Mbps</span></div>`;
+                                    }).join('')}
+                                </div>
+                            </div>` : ''}
+                        ${t.temperature?.count > 0 ? `
+                            <div class="mt-2">
+                                <small class="text-muted"><i class="bi bi-thermometer"></i> <strong>Sensors:</strong></small>
+                                <div class="small">
+                                    ${t.temperature.sensors.slice(0, 3).map(sensor => {
+                                        const sb = sensor.status === 'ok' ? 'success' : sensor.status === 'warning' ? 'warning' : 'danger';
+                                        const st = toDisplay(sensor.temperature);
+                                        return `<span class="badge bg-${sb} me-1 temp-toggle" onclick="toggleTempUnit()" title="Click to switch °C / °F" style="cursor:pointer;">${sensor.name}: ${st.val}${st.unit}</span>`;
+                                    }).join('')}
+                                </div>
+                            </div>` : ''}
+                    ` : `<div class="alert alert-danger mb-0"><small>${t.error || 'Device unreachable'}</small></div>`}
+                </div>
+                ${t.reachable ? `
+                    <div class="card-footer text-end">
+                        <a href="/devices/${device.hostname}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View Details
+                        </a>
+                    </div>` : ''}
+            </div>
+        </div>`;
+}
+
+function compactCard(device) {
+    const t = device.telemetry;
+    const statusClass = t.reachable ? 'success' : 'danger';
+    const statusIcon  = t.reachable ? 'check-circle-fill' : 'x-circle-fill';
+    const p = devicePriority(device);
+    const borderClass = p === 0 ? 'device-card-down' : p <= 2 ? 'device-card-warning' : '';
+    const { tempStatus, tempIcon, avgTemp } = buildDeviceStats(device);
+    const td = toDisplay(avgTemp);
+    return `
+        <div class="col-xl-3 col-lg-4 col-md-6 mb-2">
+            <div class="card compact-device-card ${borderClass}" data-device-hostname="${device.hostname}">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="hostname" title="${device.hostname}">
+                            <i class="bi bi-hdd-network" style="font-size:0.75rem;"></i> ${device.hostname}
+                        </span>
+                        <span class="badge bg-${statusClass} device-status-badge" style="font-size:0.65rem;">
+                            <i class="bi bi-${statusIcon}"></i> ${t.reachable ? 'UP' : 'DOWN'}
+                        </span>
+                    </div>
+                    ${t.reachable ? `
+                        <div class="d-flex stat-row flex-wrap">
+                            <span class="text-muted">${device.ip}</span>
+                            <span>CPU <strong>${t.system?.cpu_percent || 0}%</strong></span>
+                            <span>Mem <strong>${t.system?.memory_percent || 0}%</strong></span>
+                            <span class="badge bg-${tempStatus} temp-toggle" onclick="toggleTempUnit()"
+                                  title="Click to switch °C / °F" style="cursor:pointer;font-size:0.65rem;">
+                                <i class="bi bi-${tempIcon}"></i> ${td.val}${td.unit}
+                            </span>
+                        </div>
+                        <div class="d-flex gap-1 mt-1">
+                            <span class="badge bg-success" style="font-size:0.65rem;">${t.interfaces?.up || 0} UP</span>
+                            <span class="badge bg-danger" style="font-size:0.65rem;">${t.interfaces?.down || 0} DOWN</span>
+                        </div>
+                        <a href="/devices/${device.hostname}" class="btn btn-outline-primary btn-detail mt-1">
+                            <i class="bi bi-eye"></i> Details
+                        </a>
+                    ` : `<div class="text-danger" style="font-size:0.75rem;"><i class="bi bi-exclamation-triangle"></i> ${t.error || 'Unreachable'}</div>`}
+                </div>
+            </div>
+        </div>`;
+}
+
+function renderCard(device) {
+    return cardSize === 'compact' ? compactCard(device) : normalCard(device);
+}
+
+// ── Custom groups API + render ────────────────────────────────────────────────
+function loadDeviceGroups() {
+    return fetch('/api/device-groups')
+        .then(r => r.json())
+        .then(groups => { deviceGroups = groups; })
+        .catch(() => { deviceGroups = []; });
+}
+
+function renderCustomGroups(sorted) {
+    if (deviceGroups.length === 0) {
+        return `<div class="text-center text-muted py-4">
+            <i class="bi bi-collection" style="font-size:2rem;"></i>
+            <p class="mt-2">No custom groups defined yet.<br>
+            Click <strong><i class="bi bi-pencil-square"></i> Groups</strong> to create one.</p>
+            <div class="row">${sorted.map(renderCard).join('')}</div>
+        </div>`;
+    }
+
+    // Build hostname → device map for quick lookup
+    const deviceMap = new Map(sorted.map(d => [d.hostname, d]));
+
+    // Sort groups: DOWN first, then WARN, then clean
+    const groupPriority = g => {
+        const devs = g.devices.map(h => deviceMap.get(h)).filter(Boolean);
+        return Math.min(...devs.map(d => devicePriority(d)), 4);
+    };
+    const sortedGroups = [...deviceGroups].sort((a, b) => groupPriority(a) - groupPriority(b));
+
+    // Track which devices are in a group
+    const assignedHostnames = new Set(deviceGroups.flatMap(g => g.devices));
+
+    let html = '';
+
+    sortedGroups.forEach(group => {
+        const gid = group.group_id;
+        const groupDevices = group.devices.map(h => deviceMap.get(h)).filter(Boolean);
+        // Sort devices within group by priority
+        groupDevices.sort((a, b) => devicePriority(a) - devicePriority(b));
+
+        const downCount = groupDevices.filter(d => !d.telemetry.reachable).length;
+        const warnCount = groupDevices.filter(d => devicePriority(d) <= 2 && d.telemetry.reachable).length;
+        const upCount   = groupDevices.filter(d => d.telemetry.reachable && devicePriority(d) >= 3).length;
+
+        const hasDown    = downCount > 0;
+        const hasWarn    = warnCount > 0 && !hasDown;
+        const groupClass = hasDown ? 'has-down' : hasWarn ? 'has-warning' : '';
+
+        const defaultCollapsed = !hasDown && !hasWarn;
+        const isCollapsed = groupCollapsed.has(gid) ? groupCollapsed.get(gid) : defaultCollapsed;
+
+        // Status dots for collapsed view
+        const dots = groupDevices.map(d => {
+            const p = devicePriority(d);
+            const dotClass = !d.telemetry.reachable ? 'dot-down' : p <= 1 ? 'dot-down' : p === 2 ? 'dot-warn' : 'dot-up';
+            return `<span class="status-dot ${dotClass}" title="${d.hostname}"></span>`;
+        }).join('');
+
+        html += `
+            <div class="site-group ${groupClass} mb-3">
+                <div class="site-group-header" onclick="toggleCustomGroup(${gid})">
+                    <div class="d-flex flex-column flex-grow-1 gap-1">
+                        <div class="d-flex align-items-center gap-2">
+                            <i class="bi bi-collection"></i>
+                            <span>${group.group_name}</span>
+                            <span class="badge bg-secondary" style="font-size:0.7rem;">${groupDevices.length}</span>
+                            ${downCount ? `<span class="badge bg-danger" style="font-size:0.7rem;">${downCount} DOWN</span>` : ''}
+                            ${warnCount ? `<span class="badge bg-warning text-dark" style="font-size:0.7rem;">${warnCount} WARN</span>` : ''}
+                            ${upCount   ? `<span class="badge bg-success" style="font-size:0.7rem;">${upCount} UP</span>` : ''}
+                        </div>
+                        <div class="status-dots-row" id="cg-dots-${gid}"
+                             style="${isCollapsed ? '' : 'display:none;'}">
+                            ${dots}
+                        </div>
+                    </div>
+                    <i class="bi bi-chevron-${isCollapsed ? 'down' : 'up'}" id="cg-chev-${gid}" style="flex-shrink:0;margin-left:0.5rem;"></i>
+                </div>
+                <div class="site-group-body" id="cg-body-${gid}"
+                     style="${isCollapsed ? 'display:none;' : ''}">
+                    ${groupDevices.length > 0
+                        ? `<div class="row">${groupDevices.map(renderCard).join('')}</div>`
+                        : `<p class="text-muted small mb-0">No devices assigned to this group are online in telemetry.</p>`}
+                </div>
+            </div>`;
+    });
+
+    // Ungrouped devices at the bottom
+    const ungrouped = sorted.filter(d => !assignedHostnames.has(d.hostname));
+    if (ungrouped.length > 0) {
+        const gid = 'ungrouped';
+        const isCollapsed = groupCollapsed.has(gid) ? groupCollapsed.get(gid) : true;
+        const downCount = ungrouped.filter(d => !d.telemetry.reachable).length;
+        const dots = ungrouped.map(d => {
+            const p = devicePriority(d);
+            const dotClass = !d.telemetry.reachable ? 'dot-down' : p <= 1 ? 'dot-down' : p === 2 ? 'dot-warn' : 'dot-up';
+            return `<span class="status-dot ${dotClass}" title="${d.hostname}"></span>`;
+        }).join('');
+        html += `
+            <div class="site-group mb-3">
+                <div class="site-group-header" onclick="toggleCustomGroup('${gid}')">
+                    <div class="d-flex flex-column flex-grow-1 gap-1">
+                        <div class="d-flex align-items-center gap-2">
+                            <i class="bi bi-question-circle text-muted"></i>
+                            <span class="text-muted">Ungrouped</span>
+                            <span class="badge bg-secondary" style="font-size:0.7rem;">${ungrouped.length}</span>
+                            ${downCount ? `<span class="badge bg-danger" style="font-size:0.7rem;">${downCount} DOWN</span>` : ''}
+                        </div>
+                        <div class="status-dots-row" id="cg-dots-${gid}"
+                             style="${isCollapsed ? '' : 'display:none;'}">
+                            ${dots}
+                        </div>
+                    </div>
+                    <i class="bi bi-chevron-${isCollapsed ? 'down' : 'up'}" id="cg-chev-${gid}" style="flex-shrink:0;margin-left:0.5rem;"></i>
+                </div>
+                <div class="site-group-body" id="cg-body-${gid}"
+                     style="${isCollapsed ? 'display:none;' : ''}">
+                    <div class="row">${ungrouped.map(renderCard).join('')}</div>
+                </div>
+            </div>`;
+    }
+
+    return html;
+}
+
+// ── Manage Groups Modal ───────────────────────────────────────────────────────
+function openManageGroups() {
+    loadDeviceGroups().then(() => renderGroupsList());
+    populateDeviceCheckboxes();
+    cancelEditGroup();
+    const modal = new bootstrap.Modal(document.getElementById('manageGroupsModal'));
+    modal.show();
+}
+
+function renderGroupsList() {
+    const el = document.getElementById('groupsList');
+    if (deviceGroups.length === 0) {
+        el.innerHTML = '<p class="text-muted small">No groups yet. Create one below.</p>';
+        return;
+    }
+    el.innerHTML = `
+        <h6 class="mb-2">Existing Groups</h6>
+        <div class="list-group">
+            ${deviceGroups.map(g => `
+                <div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center py-2">
+                    <div>
+                        <strong>${g.group_name}</strong>
+                        <span class="badge bg-secondary ms-2">${g.devices.length} devices</span>
+                    </div>
+                    <div class="d-flex gap-1">
+                        <button class="btn btn-outline-primary btn-sm" onclick="startEditGroup(${g.group_id})">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="btn btn-outline-danger btn-sm" onclick="deleteGroup(${g.group_id})">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </div>`).join('')}
+        </div>`;
+}
+
+function populateDeviceCheckboxes(selectedHostnames = []) {
+    const container = document.getElementById('deviceCheckboxList');
+    const allDevices = cachedDevices.length > 0 ? cachedDevices : [];
+    if (allDevices.length === 0) {
+        container.innerHTML = '<span class="text-muted small">No devices available.</span>';
+        return;
+    }
+    const sorted = [...allDevices].sort((a, b) => a.hostname.localeCompare(b.hostname));
+    container.innerHTML = sorted.map(d => `
+        <div class="form-check device-checkbox-item" data-hostname="${d.hostname.toLowerCase()}">
+            <input class="form-check-input" type="checkbox" id="dchk-${d.hostname}"
+                   value="${d.hostname}" ${selectedHostnames.includes(d.hostname) ? 'checked' : ''}>
+            <label class="form-check-label d-flex align-items-center gap-2" for="dchk-${d.hostname}">
+                <span class="status-dot ${d.telemetry?.reachable ? 'dot-up' : 'dot-down'}" style="width:9px;height:9px;flex-shrink:0;"></span>
+                <span>${d.hostname}</span>
+                <small class="text-muted">${d.ip || ''}</small>
+            </label>
+        </div>`).join('');
+}
+
+function filterGroupDevices() {
+    const q = document.getElementById('deviceSearchInput').value.toLowerCase();
+    document.querySelectorAll('.device-checkbox-item').forEach(item => {
+        item.style.display = item.dataset.hostname.includes(q) ? '' : 'none';
+    });
+}
+
+function startEditGroup(groupId) {
+    const group = deviceGroups.find(g => g.group_id === groupId);
+    if (!group) return;
+    document.getElementById('editingGroupId').value = groupId;
+    document.getElementById('groupNameInput').value = group.group_name;
+    document.getElementById('groupFormTitle').innerHTML = `<i class="bi bi-pencil"></i> Edit Group`;
+    document.getElementById('groupFormCancelEdit').classList.remove('d-none');
+    populateDeviceCheckboxes(group.devices);
+    document.getElementById('deviceSearchInput').value = '';
+    filterGroupDevices();
+}
+
+function cancelEditGroup() {
+    document.getElementById('editingGroupId').value = '';
+    document.getElementById('groupNameInput').value = '';
+    document.getElementById('groupFormTitle').innerHTML = `<i class="bi bi-plus-circle"></i> New Group`;
+    document.getElementById('groupFormCancelEdit').classList.add('d-none');
+    populateDeviceCheckboxes([]);
+    document.getElementById('deviceSearchInput').value = '';
+}
+
+function saveGroup() {
+    const name = document.getElementById('groupNameInput').value.trim();
+    if (!name) { alert('Please enter a group name.'); return; }
+    const hostnames = [...document.querySelectorAll('#deviceCheckboxList input:checked')].map(el => el.value);
+    const editingId = document.getElementById('editingGroupId').value;
+
+    const url    = editingId ? `/api/device-groups/${editingId}` : '/api/device-groups';
+    const method = editingId ? 'PUT' : 'POST';
+
+    fetch(url, { method, headers: {'Content-Type': 'application/json'},
+                 body: JSON.stringify({ name, devices: hostnames }) })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                loadDeviceGroups().then(() => {
+                    renderGroupsList();
+                    cancelEditGroup();
+                    if (groupMode === 'custom') displayTelemetry(cachedDevices);
+                });
+            } else {
+                alert(data.error || 'Failed to save group.');
+            }
+        });
+}
+
+function deleteGroup(groupId) {
+    const group = deviceGroups.find(g => g.group_id === groupId);
+    if (!confirm(`Delete group "${group?.group_name}"?`)) return;
+    fetch(`/api/device-groups/${groupId}`, { method: 'DELETE' })
+        .then(r => r.json())
+        .then(() => {
+            loadDeviceGroups().then(() => {
+                renderGroupsList();
+                if (groupMode === 'custom') displayTelemetry(cachedDevices);
+            });
+        });
+}
+
+// ── Main render ───────────────────────────────────────────────────────────────
+function displayTelemetry(devices) {
+    const container = document.getElementById('telemetryContainer');
+    cachedDevices = devices;
+
+    const now = new Date();
+    document.getElementById('lastRefreshTime').textContent = `Last updated: ${now.toLocaleTimeString()}`;
+
+    container.style.opacity = '0.6';
+    setTimeout(() => { container.style.opacity = '1'; }, 100);
+
+    // Sort devices by selected mode
+    const sorted = sortDevices(devices);
+
+    let html = '';
+
+    if (groupMode === 'auto') {
+        // Group by site prefix extracted from hostname
+        const siteMap = new Map();
+        sorted.forEach(d => {
+            const site = getSite(d.hostname);
+            if (!siteMap.has(site)) siteMap.set(site, []);
+            siteMap.get(site).push(d);
+        });
+
+        const sitePriority = site => Math.min(...siteMap.get(site).map(devicePriority));
+        const sitesSorted = [...siteMap.keys()].sort((a, b) => sitePriority(a) - sitePriority(b));
+
+        sitesSorted.forEach(site => {
+            const siteDevices = siteMap.get(site);
+            const downCount   = siteDevices.filter(d => !d.telemetry.reachable).length;
+            const warnCount   = siteDevices.filter(d => devicePriority(d) <= 2 && d.telemetry.reachable).length;
+            const upCount     = siteDevices.filter(d => d.telemetry.reachable && devicePriority(d) >= 3).length;
+
+            const hasDown    = downCount > 0;
+            const hasWarn    = warnCount > 0 && !hasDown;
+            const groupClass = hasDown ? 'has-down' : hasWarn ? 'has-warning' : '';
+
+            const defaultCollapsed = !hasDown && !hasWarn;
+            const isCollapsed = siteCollapsed.has(site) ? siteCollapsed.get(site) : defaultCollapsed;
+            const siteId = site.replace(/[^a-zA-Z0-9]/g, '_');
+
+            html += `
+                <div class="site-group ${groupClass} mb-3">
+                    <div class="site-group-header" onclick="toggleSite('${siteId}')">
+                        <div class="d-flex align-items-center gap-2">
+                            <i class="bi bi-building"></i>
+                            <span>${site}</span>
+                            <span class="badge bg-secondary" style="font-size:0.7rem;">${siteDevices.length}</span>
+                            ${downCount ? `<span class="badge bg-danger" style="font-size:0.7rem;">${downCount} DOWN</span>` : ''}
+                            ${warnCount ? `<span class="badge bg-warning text-dark" style="font-size:0.7rem;">${warnCount} WARN</span>` : ''}
+                            ${upCount   ? `<span class="badge bg-success" style="font-size:0.7rem;">${upCount} UP</span>` : ''}
+                        </div>
+                        <i class="bi bi-chevron-${isCollapsed ? 'down' : 'up'}" id="site-chev-${siteId}"></i>
+                    </div>
+                    <div class="site-group-body" id="site-body-${siteId}"
+                         style="${isCollapsed ? 'display:none;' : ''}">
+                        <div class="row">
+                            ${siteDevices.map(renderCard).join('')}
+                        </div>
+                    </div>
+                </div>`;
+        });
+
+    } else if (groupMode === 'custom') {
+        html += renderCustomGroups(sorted);
+
+    } else {
+        html = `<div class="row">${sorted.map(renderCard).join('')}</div>`;
+    }
+
+    container.innerHTML = html;
+
+    // Force dark text on all yellow (warning) badges — CSS specificity can't beat inline style
+    if (document.documentElement.getAttribute('data-bs-theme') === 'dark') {
+        container.querySelectorAll('.badge.bg-warning').forEach(el => {
+            el.style.color = '#000';
+        });
+    }
+}
+
+// Fix warning badge text color on static (Jinja-rendered) badges too
+function fixWarningBadgeColors() {
+    if (document.documentElement.getAttribute('data-bs-theme') === 'dark') {
+        document.querySelectorAll('.badge.bg-warning').forEach(el => {
+            el.style.color = '#000';
+        });
+    } else {
+        document.querySelectorAll('.badge.bg-warning').forEach(el => {
+            el.style.color = '';
+        });
+    }
+}
+
+// Re-apply badge color fix whenever the theme changes
+new MutationObserver(fixWarningBadgeColors).observe(
+    document.documentElement,
+    { attributes: true, attributeFilter: ['data-bs-theme'] }
+);
+
+// Load telemetry on page load and start auto-refresh cycles
+document.addEventListener('DOMContentLoaded', function() {
+    initSectionCollapse();       // Restore section collapse state
+
+    // Restore sort mode
+    const savedSort = localStorage.getItem('dashSortMode');
+    if (savedSort) {
+        sortMode = savedSort;
+        const sel = document.getElementById('sortSelect');
+        if (sel) sel.value = savedSort;
+    }
+
+    // Restore group mode
+    const savedGroupMode = localStorage.getItem('dashGroupMode') || 'auto';
+    setGroupMode(savedGroupMode);
+    if (savedGroupMode === 'custom') loadDeviceGroups();
+
+    fixWarningBadgeColors();
+    refreshTelemetry();          // Full telemetry (30s cycle)
+    refreshDeviceStatus();       // Fast status check (10s cycle)
+});
+
+// Device Role Chart
+const deviceRoleData = {{ device_roles|tojson }};
+const labels = Object.keys(deviceRoleData);
+const data = Object.values(deviceRoleData);
+
+const ctx = document.getElementById('deviceRoleChart');
+new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+        labels: labels,
+        datasets: [{
+            data: data,
+            backgroundColor: [
+                'rgba(54, 162, 235, 0.8)',
+                'rgba(255, 99, 132, 0.8)',
+                'rgba(255, 206, 86, 0.8)',
+                'rgba(75, 192, 192, 0.8)',
+                'rgba(153, 102, 255, 0.8)'
+            ]
+        }]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: {
+                position: 'bottom'
+            }
+        }
+    }
+});
+
+// Auto-refresh stats every 30 seconds
+setInterval(() => {
+    fetch('/api/stats')
+        .then(response => response.json())
+        .then(data => {
+            console.log('Stats updated:', data);
+        });
+}, 30000);
+</script>
+{% endblock %}

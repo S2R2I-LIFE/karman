@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+
+{% block title %}Configuration Built - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12 mb-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('config_builder') }}">Builder</a></li>
+                <li class="breadcrumb-item active">Result</li>
+            </ol>
+        </nav>
+        <h1><i class="bi bi-check-circle text-success"></i> Configuration Built Successfully</h1>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-9">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-file-earmark-code"></i> {{ filename }}</h5>
+                <div>
+                    <button class="btn btn-sm btn-outline-primary" onclick="copyToClipboard()">
+                        <i class="bi bi-clipboard"></i> Copy
+                    </button>
+                    <button class="btn btn-sm btn-outline-success" onclick="downloadConfig()">
+                        <i class="bi bi-download"></i> Download
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">Built from: <code>{{ device }}</code></p>
+                <hr>
+                <pre class="bg-dark text-light p-3 rounded" style="max-height: 600px; overflow-y: auto;" id="configContent"><code>{{ config }}</code></pre>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-lightning"></i> Next Steps</h5>
+            </div>
+            <div class="card-body d-grid gap-2">
+                <button class="btn btn-success" onclick="deployConfig()">
+                    <i class="bi bi-cloud-upload"></i> Deploy to Device
+                </button>
+                <button class="btn btn-info" onclick="validateConfig()">
+                    <i class="bi bi-check-square"></i> Validate
+                </button>
+                <button class="btn btn-warning" onclick="createTask()">
+                    <i class="bi bi-clipboard-check"></i> Create Task
+                </button>
+                <hr>
+                <a href="{{ url_for('config_builder') }}" class="btn btn-primary">
+                    <i class="bi bi-arrow-left"></i> Build Another
+                </a>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> Info</h5>
+            </div>
+            <div class="card-body">
+                <dl class="mb-0">
+                    <dt>Lines</dt>
+                    <dd>{{ config.split('\n')|length }}</dd>
+                    <dt>Size</dt>
+                    <dd>{{ (config|length / 1024)|round(2) }} KB</dd>
+                    <dt>Generated</dt>
+                    <dd>Just now</dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function copyToClipboard() {
+    const config = document.getElementById('configContent').textContent;
+    navigator.clipboard.writeText(config).then(() => {
+        alert('Configuration copied to clipboard!');
+    });
+}
+
+function downloadConfig() {
+    const config = document.getElementById('configContent').textContent;
+    const blob = new Blob([config], {type: 'text/plain'});
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '{{ filename }}';
+    a.click();
+}
+
+function validateConfig() {
+    const config = document.getElementById('configContent').textContent;
+    const btn = event.target.closest('button');
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Validating...';
+    btn.disabled = true;
+
+    fetch('/builder/validate', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ config: config })
+    })
+    .then(response => response.json())
+    .then(data => {
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+
+        if (data.success) {
+            if (data.is_valid) {
+                alert('✓ Configuration is valid!\n\nNo syntax errors found.');
+            } else {
+                alert('⚠ Configuration has issues:\n\n' + data.errors.join('\n'));
+            }
+        } else {
+            alert('Error validating configuration: ' + data.error);
+        }
+    })
+    .catch(error => {
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+        alert('Error validating configuration: ' + error);
+    });
+}
+
+function deployConfig() {
+    if (!confirm('Deploy this configuration to {{ device }}?')) {
+        return;
+    }
+
+    const config = document.getElementById('configContent').textContent;
+    const btn = event.target.closest('button');
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Deploying...';
+    btn.disabled = true;
+
+    fetch('/builder/deploy', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            config: config,
+            device: '{{ device }}',
+            filename: '{{ filename }}'
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+
+        if (data.success) {
+            alert('✓ Deployment task created!\n\nTask ID: ' + data.task_id + '\nConfiglet: ' + data.configlet);
+            if (confirm('View task details?')) {
+                window.location.href = '/tasks/' + data.task_id;
+            }
+        } else {
+            alert('Error deploying configuration: ' + data.error);
+        }
+    })
+    .catch(error => {
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+        alert('Error deploying configuration: ' + error);
+    });
+}
+
+function createTask() {
+    const config = document.getElementById('configContent').textContent;
+    const btn = event.target.closest('button');
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Creating...';
+    btn.disabled = true;
+
+    fetch('/builder/create-task', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            config: config,
+            device: '{{ device }}',
+            filename: '{{ filename }}'
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+
+        if (data.success) {
+            alert('✓ Task created!\n\nTask ID: ' + data.task_id + '\nConfiglet: ' + data.configlet);
+            if (confirm('View task details?')) {
+                window.location.href = '/tasks/' + data.task_id;
+            }
+        } else {
+            alert('Error creating task: ' + data.error);
+        }
+    })
+    .catch(error => {
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+        alert('Error creating task: ' + error);
+    });
+}
+</script>
+{% endblock %}

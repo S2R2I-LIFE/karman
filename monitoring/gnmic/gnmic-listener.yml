@@ -1,0 +1,41 @@
+# ── gnmic listener — Kármán gNMI dial-out ingest ────────────────────────────
+# Acts as a gNMI server on port 9910.  Devices connect TO Kármán using
+# TerminAttr's -cvgnmicgrpcurl flag and push subscriptions here.
+#
+# Device TerminAttr config required on each device:
+#   daemon TerminAttr
+#      exec /usr/bin/TerminAttr \
+#         -cvgnmicgrpcurl=192.168.100.1:9910 \
+#         -smashexcludes=ale,flexCounter,hardware,kni,pulse,strata \
+#         -ingestexclude=/Sysdb/cell/1/agent,/Sysdb/cell/2/agent \
+#         -taillogs
+#      no shutdown
+#
+# Note: TerminAttr must use -grpcaddr=default/0.0.0.0:6030 (NOT management api gnmi).
+# management api gnmi does not serve eos_native paths — it hangs on Get requests.
+# Remove "management api gnmi" from EOS config on all devices.
+#
+# Routing prerequisite (on CR):
+#   router ospf 1
+#      redistribute static   ! so non-CR devices can route back to 192.168.2.0/24
+# ─────────────────────────────────────────────────────────────────────────────
+
+username: ${GNMIC_USERNAME}
+password: ${GNMIC_PASSWORD}
+
+# Plaintext gRPC — matches vEOS-lab TerminAttr default (no TLS).
+# Set insecure: false and add tls-* options for production.
+insecure: true
+
+# Listen address — devices dial out to this port.
+# Port 9910 is the conventional gNMI ingest port (same as CVP).
+address: ":9910"
+
+outputs:
+  prometheus:
+    type: prometheus
+    # Separate Prometheus metrics port from the dial-in gnmic (9273).
+    # Override in .env with GNMIC_INGEST_METRICS_PORT if 9274 is in use.
+    listen: ":${GNMIC_INGEST_METRICS_PORT}"
+    metric-prefix: gnmic_ingest
+    expiration: 120s

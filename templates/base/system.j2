@@ -1,0 +1,39 @@
+!
+! Hostname and Domain
+!
+hostname {{ hostname }}
+{% if domain_name %}
+ip domain-name {{ domain_name }}
+{% endif %}
+!
+! DNS Servers
+!
+{% for dns in dns_servers %}
+ip name-server vrf {{ dns.vrf | default('default') }} {{ dns.ip }}
+{% endfor %}
+!
+! NTP Configuration
+!
+{% for ntp in ntp_servers %}
+ntp server vrf {{ ntp.vrf | default('default') }} {{ ntp.ip }}{% if ntp.prefer %} prefer{% endif %}
+
+{% endfor %}
+!
+! Logging
+!
+{% for server in logging_servers %}
+logging host {{ server.ip }} {{ server.port | default(514) }} protocol {{ server.protocol | default('udp') }}
+{% endfor %}
+!
+! AAA
+!
+aaa authorization exec default local
+aaa authentication login default local
+aaa authentication enable default local
+!
+! Local Users
+!
+{% for user in local_users %}
+username {{ user.name }} privilege {{ user.privilege }} role {{ user.role }} secret sha512 {{ user.password_hash }}
+{% endfor %}
+!

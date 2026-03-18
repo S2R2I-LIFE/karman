@@ -1,0 +1,137 @@
+services:
+  custom-cvp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: custom-cvp-docker
+    hostname: custom-cvp-mgmt
+    restart: unless-stopped
+    network_mode: host  # Use host networking for direct access
+
+    volumes:
+      # Persistent database
+      - ./data:/app/data
+      # Generated configurations
+      - ./output:/app/output
+      # Logs
+      - ./logs:/app/logs
+      # Templates (for live editing)
+      - ./templates:/app/templates:ro
+      # Variables (for live editing)
+      - ./variables:/app/variables:ro
+      # Source code (live reload - no rebuild needed for code changes)
+      - ./web:/app/web
+      - ./core:/app/core
+      - ./connectors:/app/connectors
+      # Arista MIB files (read-only reference data)
+      - ./screenshots/arista-mibs:/app/screenshots/arista-mibs:ro
+
+    environment:
+      # Flask settings
+      - FLASK_APP=web/app.py
+      - FLASK_ENV=production
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+
+      # Database
+      - DATABASE_PATH=/app/data/custom-cvp.db
+
+      # Application settings
+      - DEFAULT_USERNAME=${DEFAULT_USERNAME:-admin}
+      - DEFAULT_PASSWORD=${DEFAULT_PASSWORD:-admin}
+
+      # Device credentials (used for SSH/eAPI/gNMI connections)
+      - DEFAULT_DEVICE_USERNAME=${DEFAULT_DEVICE_USERNAME:-admin}
+      - DEFAULT_DEVICE_PASSWORD=${DEFAULT_DEVICE_PASSWORD:-}
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+      # Monitoring
+      - PROMETHEUS_URL=${PROMETHEUS_URL:-http://localhost:9091}
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    labels:
+      com.custom-cvp.description: "Kármán Management Platform"
+      com.custom-cvp.version: "1.0.0"
+
+  # ── gnmic — gNMI streaming collector (dial-in / pull) ────────────────────
+  # Connects OUT to each device on port 6030 and subscribes to eos_native paths.
+  gnmic:
+    image: ghcr.io/openconfig/gnmic:latest
+    container_name: karman-gnmic
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./monitoring/gnmic/gnmic.yml:/app/gnmic.yml:ro
+    command:
+      - subscribe
+      - --config
+      - /app/gnmic.yml
+    environment:
+      # Credentials passed via env so they are not stored in the config file.
+      # Set DEFAULT_DEVICE_USERNAME / DEFAULT_DEVICE_PASSWORD in .env.
+      - GNMIC_USERNAME=${DEFAULT_DEVICE_USERNAME:-admin}
+      - GNMIC_PASSWORD=${DEFAULT_DEVICE_PASSWORD:-}
+      # Port gnmic exposes Prometheus metrics on.
+      # Override in .env if 9273 is already in use: TELEGRAF_METRICS_PORT=9274
+      - GNMIC_METRICS_PORT=${TELEGRAF_METRICS_PORT:-9273}
+    depends_on:
+      - custom-cvp
+
+  # ── gnmic-listener — gNMI ingest receiver (dial-out / push) ──────────────
+  # Listens on port 9910 for devices that dial OUT using TerminAttr's
+  # -cvgnmicgrpcurl=<karman-ip>:9910 flag.  Exposes received metrics on
+  # port 9274 for Prometheus to scrape (separate from the dial-in gnmic).
+  gnmic-listener:
+    image: ghcr.io/openconfig/gnmic:latest
+    container_name: karman-gnmic-listener
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./monitoring/gnmic/gnmic-listener.yml:/app/gnmic-listener.yml:ro
+    command:
+      - listen
+      - --config
+      - /app/gnmic-listener.yml
+    environment:
+      - GNMIC_USERNAME=${DEFAULT_DEVICE_USERNAME:-admin}
+      - GNMIC_PASSWORD=${DEFAULT_DEVICE_PASSWORD:-}
+      # Prometheus metrics port for ingest data (separate from dial-in port 9273).
+      # Override in .env: GNMIC_INGEST_METRICS_PORT=9275
+      - GNMIC_INGEST_METRICS_PORT=${GNMIC_INGEST_METRICS_PORT:-9274}
+    depends_on:
+      - custom-cvp
+
+  # ── Prometheus — time-series database ────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    container_name: karman-prometheus
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+      # Port defaults to 9091 to avoid conflicts with common services on 9090.
+      # Override in .env if needed: PROMETHEUS_PORT=9092
+      - '--web.listen-address=:${PROMETHEUS_PORT:-9091}'
+
+volumes:
+  cvp-data:
+    driver: local
+  cvp-output:
+    driver: local
+  cvp-logs:
+    driver: local
+  prometheus-data:
+    driver: local

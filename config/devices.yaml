@@ -1,0 +1,87 @@
+# Device Inventory
+# This file can be imported into the database using the CLI
+
+devices:
+  - hostname: leaf1-dc1
+    ip_address: 192.168.1.11
+    model: DCS-7050SX-128
+    serial_number: JPE12345678
+    eos_version: 4.27.3F
+    management_type: eapi
+    role: leaf
+    site: datacenter1
+    container: DC1_LEAFS
+    cvp_managed: false
+    configlets:
+      - BASE_CONFIG
+      - LEAF_L2_CONFIG
+      - LEAF_L3_CONFIG
+    tags:
+      pod: pod1
+      rack: rack1
+
+  - hostname: leaf2-dc1
+    ip_address: 192.168.1.12
+    model: DCS-7050SX-128
+    serial_number: JPE12345679
+    eos_version: 4.27.3F
+    management_type: eapi
+    role: leaf
+    site: datacenter1
+    container: DC1_LEAFS
+    cvp_managed: false
+    configlets:
+      - BASE_CONFIG
+      - LEAF_L2_CONFIG
+      - LEAF_L3_CONFIG
+    tags:
+      pod: pod1
+      rack: rack1
+
+  - hostname: spine1-dc1
+    ip_address: 192.168.1.1
+    model: DCS-7280SR-48C6
+    serial_number: JPE12340001
+    eos_version: 4.27.3F
+    management_type: eapi
+    role: spine
+    site: datacenter1
+    container: DC1_SPINES
+    cvp_managed: true
+    configlets:
+      - BASE_CONFIG
+      - SPINE_CONFIG
+    tags:
+      pod: pod1
+
+  - hostname: spine2-dc1
+    ip_address: 192.168.1.2
+    model: DCS-7280SR-48C6
+    serial_number: JPE12340002
+    eos_version: 4.27.3F
+    management_type: eapi
+    role: spine
+    site: datacenter1
+    container: DC1_SPINES
+    cvp_managed: true
+    configlets:
+      - BASE_CONFIG
+      - SPINE_CONFIG
+    tags:
+      pod: pod1
+
+  - hostname: border1-dc1
+    ip_address: 192.168.1.21
+    model: DCS-7280SR-48C6
+    serial_number: JPE12340010
+    eos_version: 4.27.3F
+    management_type: eapi
+    role: border
+    site: datacenter1
+    container: DC1_BORDERS
+    cvp_managed: false
+    configlets:
+      - BASE_CONFIG
+      - BORDER_CONFIG
+    tags:
+      function: wan-edge

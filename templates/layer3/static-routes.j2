@@ -1,0 +1,10 @@
+!
+! Static Routes
+!
+{% if static_routes %}
+{% for route in static_routes %}
+ip route {% if route.vrf %}vrf {{ route.vrf }} {% endif %}{{ route.destination }} {{ route.next_hop }}{% if route.distance %} {{ route.distance }}{% endif %}{% if route.name %} name {{ route.name }}{% endif %}
+
+{% endfor %}
+!
+{% endif %}

@@ -1,0 +1,619 @@
+{% extends "base.html" %}
+
+{% block title %}Configlets - {{ app_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+body {
+    background-color: #e9ecef;
+}
+.card {
+    background-color: #ffffff;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+/* Dark mode overrides */
+[data-bs-theme="dark"] body {
+    background-color: #0d1117 !important;
+}
+[data-bs-theme="dark"] .card {
+    background-color: #161b22 !important;
+}
+[data-bs-theme="dark"] .card:hover {
+    box-shadow: 0 4px 8px rgba(255,255,255,0.1) !important;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-start mb-4">
+            <div>
+                <h1 class="mb-1 help-title" data-help-key="configlets" onclick="toggleHelpPanel('configlets')">
+                    <i class="bi bi-file-earmark-code"></i> Configlets
+                    <i class="bi bi-chevron-down ms-2 help-chev" id="help-chev-configlets"></i>
+                </h1>
+                <div id="help-body-configlets" class="help-body-inline mt-2">
+                    <div class="row g-3">
+                        <div class="col-md-5">
+                            <p class="text-muted">A <strong>configlet</strong> is a reusable snippet of EOS configuration. Instead of typing the same block of CLI on every device, you write it once, parameterise it with <strong>Jinja2 variables</strong>, and apply it to as many devices as needed.</p>
+                            <p class="text-muted">Configlets can be assigned to individual devices or to a container of devices. When applied, Kármán renders the template with each device's variables and pushes the resulting configuration via the device's management connection.</p>
+                        </div>
+                        <div class="col-md-7">
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <div class="help-tip"><i class="bi bi-braces text-primary"></i><span><strong>Jinja2 templating</strong> — use <code>{{ "{{" }} variable {{ "}}" }}</code> syntax to substitute per-device values such as IP addresses, ASNs, or interface names.</span></div>
+                                    <div class="help-tip"><i class="bi bi-eye text-info"></i><span><strong>Preview</strong> — render the configlet with sample variable values before applying it to a live device.</span></div>
+                                    <div class="help-tip"><i class="bi bi-check2-circle text-success"></i><span><strong>Validate</strong> — Kármán checks the configuration syntax before pushing, reducing the risk of a bad commit.</span></div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="help-tip"><i class="bi bi-hdd-network text-secondary"></i><span><strong>Assign to devices</strong> — open a configlet and use the Assign button to link it to one or more devices from the inventory.</span></div>
+                                    <div class="help-tip"><i class="bi bi-list-check text-warning"></i><span><strong>Tasks</strong> — applying a configlet creates a <strong>Task</strong> that you can track, approve, and roll back from the Tasks page.</span></div>
+                                    <div class="help-tip"><i class="bi bi-clock-history text-secondary"></i><span><strong>Version history</strong> — every edit is logged so you can see what changed, when, and who made the change.</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <a href="{{ url_for('create_configlet') }}" class="btn btn-primary flex-shrink-0 ms-3">
+                <i class="bi bi-plus-circle"></i> Create Configlet
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Search and Group Controls -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <form method="get" id="searchForm">
+            <div class="input-group">
+                <input type="text" class="form-control" name="search" id="searchInput" placeholder="Search..." value="{{ search }}" oninput="debouncedSearch()">
+                <input type="hidden" name="group_by" value="{{ group_by }}">
+                <input type="hidden" name="filter_type" id="filterType" value="{{ request.args.get('filter_type', '') }}">
+                <input type="hidden" name="filter_group" id="filterGroup" value="{{ request.args.get('filter_group', '') }}">
+                <button class="btn btn-outline-secondary" type="submit">
+                    <i class="bi bi-search"></i>
+                </button>
+            </div>
+        </form>
+    </div>
+    <div class="col-md-2">
+        <select class="form-select" id="typeFilter" onchange="applyFilters()">
+            <option value="">All Types</option>
+            <option value="static" {{ 'selected' if request.args.get('filter_type') == 'static' }}>Static</option>
+            <option value="template" {{ 'selected' if request.args.get('filter_type') == 'template' }}>Template</option>
+            <option value="builder" {{ 'selected' if request.args.get('filter_type') == 'builder' }}>Builder</option>
+            <option value="dynamic" {{ 'selected' if request.args.get('filter_type') == 'dynamic' }}>Dynamic</option>
+        </select>
+    </div>
+    <div class="col-md-2">
+        <select class="form-select" id="groupFilter" onchange="applyFilters()">
+            <option value="">All Groups</option>
+            {% for group_name in all_groups %}
+            <option value="{{ group_name }}" {{ 'selected' if request.args.get('filter_group') == group_name }}>{{ group_name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-4">
+        <div class="btn-group w-100" role="group" aria-label="Group by">
+            <input type="radio" class="btn-check" name="grouping" id="group-name" value="name" {{ 'checked' if group_by == 'name' else '' }}>
+            <label class="btn btn-outline-primary" for="group-name" onclick="changeGrouping('name')">
+                <i class="bi bi-tag"></i> By Name
+            </label>
+
+            <input type="radio" class="btn-check" name="grouping" id="group-type" value="type" {{ 'checked' if group_by == 'type' else '' }}>
+            <label class="btn btn-outline-primary" for="group-type" onclick="changeGrouping('type')">
+                <i class="bi bi-collection"></i> By Type
+            </label>
+
+            <input type="radio" class="btn-check" name="grouping" id="group-none" value="none" {{ 'checked' if group_by == 'none' else '' }}>
+            <label class="btn btn-outline-primary" for="group-none" onclick="changeGrouping('none')">
+                <i class="bi bi-list"></i> No Grouping
+            </label>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <button class="btn btn-outline-secondary w-100" data-bs-toggle="modal" data-bs-target="#groupingSettingsModal">
+            <i class="bi bi-gear"></i> Group Settings
+        </button>
+    </div>
+    <div class="col-md-2">
+        <button class="btn btn-outline-info w-100" data-bs-toggle="modal" data-bs-target="#manageGroupsModal">
+            <i class="bi bi-folder-plus"></i> Manage Groups
+        </button>
+    </div>
+</div>
+
+<!-- Manage Custom Groups Modal -->
+<div class="modal fade" id="manageGroupsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-folder-plus"></i> Manage Custom Groups</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <button class="btn btn-success btn-sm" onclick="showCreateGroup()">
+                        <i class="bi bi-plus"></i> New Group
+                    </button>
+                </div>
+                <div id="createGroupForm" class="card mb-3" style="display:none;">
+                    <div class="card-body">
+                        <input type="text" class="form-control mb-2" id="newGroupName" placeholder="Group Name">
+                        <input type="text" class="form-control mb-2" id="newGroupDesc" placeholder="Description">
+                        <div class="row">
+                            <div class="col-6">
+                                <select class="form-select" id="newGroupColor">
+                                    <option value="primary">Blue</option>
+                                    <option value="success">Green</option>
+                                    <option value="warning">Orange</option>
+                                    <option value="danger">Red</option>
+                                    <option value="info">Cyan</option>
+                                </select>
+                            </div>
+                            <div class="col-6">
+                                <button class="btn btn-primary" onclick="createGroup()">Create</button>
+                                <button class="btn btn-secondary" onclick="hideCreateGroup()">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="groupsList"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Grouping Settings Modal -->
+<div class="modal fade" id="groupingSettingsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-gear"></i> Naming Convention Settings</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Grouping Separator</label>
+                    <select class="form-select" id="groupSeparator">
+                        <option value="-">Dash (-)</option>
+                        <option value="_">Underscore (_)</option>
+                        <option value=".">Dot (.)</option>
+                        <option value="custom">Custom Pattern</option>
+                    </select>
+                    <small class="text-muted">e.g., "LEAF-CONFIG" → Group: "LEAF"</small>
+                </div>
+                <div class="mb-3" id="customPatternDiv" style="display:none;">
+                    <label class="form-label">Custom Regex Pattern</label>
+                    <input type="text" class="form-control" id="customPattern" placeholder="^([A-Z]+)">
+                    <small class="text-muted">Extract group using regex (first capture group)</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Preview</label>
+                    <div class="border rounded p-2 bg-light">
+                        <div id="patternPreview">Examples will appear here...</div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveGroupingSettings()">Save Settings</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Bulk Actions Toolbar -->
+<div id="bulkActionsBar" class="alert alert-info d-none mb-4">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <strong><span id="selectedCount">0</span> selected</strong>
+        </div>
+        <div class="btn-group">
+            <button class="btn btn-sm btn-info" onclick="showBulkGroupAssign()">
+                <i class="bi bi-folder"></i> Assign to Group
+            </button>
+            <button class="btn btn-sm btn-primary" onclick="bulkApplyToDevices()">
+                <i class="bi bi-hdd-network"></i> Apply to Devices
+            </button>
+            <button class="btn btn-sm btn-warning" onclick="bulkExport()">
+                <i class="bi bi-download"></i> Export
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="bulkDelete()">
+                <i class="bi bi-trash"></i> Delete
+            </button>
+            <button class="btn btn-sm btn-secondary" onclick="clearSelection()">
+                <i class="bi bi-x"></i> Clear
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Configlets Grid - Grouped by Type -->
+<div id="configletsContainer">
+{% if configlets %}
+    {% set type_colors = {
+        'static': 'primary',
+        'template': 'success',
+        'builder': 'warning',
+        'dynamic': 'info'
+    } %}
+
+    {% set type_icons = {
+        'static': 'bi-file-text',
+        'template': 'bi-file-code',
+        'builder': 'bi-tools',
+        'dynamic': 'bi-lightning'
+    } %}
+
+    {% for group_name, group_configlets in grouped_configlets.items() %}
+    <div class="mb-5">
+        <h3 class="mb-3">
+            <input type="checkbox" class="form-check-input me-2 select-all-group" data-group="{{ group_name }}" onchange="toggleGroup(this, '{{ group_name }}')">
+            {% if group_by == 'type' %}
+                <i class="bi {{ type_icons.get(group_name, 'bi-file-earmark') }}"></i>
+                {{ group_name|title }} Configlets
+                <span class="badge bg-{{ type_colors.get(group_name, 'secondary') }}">{{ group_configlets|length }}</span>
+            {% elif group_by == 'name' %}
+                <i class="bi bi-tag-fill"></i>
+                {{ group_name }}
+                <span class="badge bg-info">{{ group_configlets|length }}</span>
+            {% else %}
+                <i class="bi bi-list-ul"></i>
+                {{ group_name }}
+                <span class="badge bg-secondary">{{ group_configlets|length }}</span>
+            {% endif %}
+        </h3>
+
+        <div class="row">
+            {% for configlet in group_configlets %}
+            <div class="col-md-6 col-lg-4 mb-4">
+                <div class="card h-100 configlet-card" data-configlet="{{ configlet.name }}" data-group="{{ group_name }}">
+                    <div class="card-header">
+                        <div class="d-flex align-items-center">
+                            <input type="checkbox" class="form-check-input me-2 configlet-checkbox" data-name="{{ configlet.name }}" onchange="updateSelection()">
+                            <h5 class="mb-0 flex-grow-1">
+                                <a href="{{ url_for('configlet_detail', name=configlet.name) }}" class="text-decoration-none">
+                                    {{ configlet.name }}
+                                </a>
+                            </h5>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted">{{ configlet.description or 'No description' }}</p>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="badge bg-{{ type_colors.get(configlet.type, 'secondary') }}">
+                                {{ configlet.type }}
+                            </span>
+                            <span class="text-muted">{{ configlet.lines }} lines</span>
+                        </div>
+                    </div>
+                    <div class="card-footer">
+                        <div class="btn-group btn-group-sm w-100" role="group">
+                            <a href="{{ url_for('configlet_detail', name=configlet.name) }}" class="btn btn-outline-primary">
+                                <i class="bi bi-eye"></i> View
+                            </a>
+                            <a href="{{ url_for('edit_configlet', name=configlet.name) }}" class="btn btn-outline-secondary">
+                                <i class="bi bi-pencil"></i> Edit
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+{% else %}
+    <div class="row">
+        <div class="col-12">
+            <p class="text-center text-muted">No configlets found. <a href="{{ url_for('create_configlet') }}">Create your first configlet</a></p>
+        </div>
+    </div>
+{% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function changeGrouping(groupBy) {
+    const url = new URL(window.location);
+    url.searchParams.set('group_by', groupBy);
+    window.location.href = url.toString();
+}
+
+function applyFilters() {
+    document.getElementById('filterType').value = document.getElementById('typeFilter').value;
+    document.getElementById('filterGroup').value = document.getElementById('groupFilter').value;
+    document.getElementById('searchForm').submit();
+}
+
+// Live AJAX search
+let searchTimeout;
+function debouncedSearch() {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+        performAjaxSearch();
+    }, 300);
+}
+
+function performAjaxSearch() {
+    const search = document.getElementById('searchInput').value;
+    const filterType = document.getElementById('typeFilter').value;
+    const filterGroup = document.getElementById('groupFilter').value;
+    const groupBy = '{{ group_by }}';
+
+    const params = new URLSearchParams({
+        search, filter_type: filterType, filter_group: filterGroup, group_by: groupBy
+    });
+
+    fetch('/api/configlets/search?' + params)
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                updateResults(data.grouped_configlets);
+            }
+        });
+}
+
+function updateResults(grouped) {
+    const container = document.getElementById('configletsContainer');
+    let html = '';
+
+    for (const [groupName, configlets] of Object.entries(grouped)) {
+        html += `
+            <div class="mb-5">
+                <h3 class="mb-3">
+                    <input type="checkbox" class="form-check-input me-2 select-all-group" data-group="${groupName}" onchange="toggleGroup(this, '${groupName}')">
+                    <i class="bi bi-tag-fill"></i> ${groupName}
+                    <span class="badge bg-info">${configlets.length}</span>
+                </h3>
+                <div class="row">`;
+
+        configlets.forEach(cfg => {
+            html += `
+                <div class="col-md-6 col-lg-4 mb-4">
+                    <div class="card h-100 configlet-card" data-configlet="${cfg.name}" data-group="${groupName}">
+                        <div class="card-header">
+                            <div class="d-flex align-items-center">
+                                <input type="checkbox" class="form-check-input me-2 configlet-checkbox" data-name="${cfg.name}" onchange="updateSelection()">
+                                <h5 class="mb-0 flex-grow-1">
+                                    <a href="/configlet/${cfg.name}" class="text-decoration-none">${cfg.name}</a>
+                                </h5>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted">${cfg.description || 'No description'}</p>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="badge bg-primary">${cfg.type}</span>
+                                <span class="text-muted">${cfg.lines} lines</span>
+                            </div>
+                        </div>
+                        <div class="card-footer">
+                            <div class="btn-group btn-group-sm w-100">
+                                <a href="/configlet/${cfg.name}" class="btn btn-outline-primary"><i class="bi bi-eye"></i> View</a>
+                                <a href="/configlet/${cfg.name}/edit" class="btn btn-outline-secondary"><i class="bi bi-pencil"></i> Edit</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+        });
+
+        html += '</div></div>';
+    }
+
+    container.innerHTML = html;
+}
+
+// Load saved grouping settings
+document.addEventListener('DOMContentLoaded', function() {
+    const separator = localStorage.getItem('groupSeparator') || '-';
+    const customPattern = localStorage.getItem('customPattern') || '';
+
+    document.getElementById('groupSeparator').value = separator;
+    if (separator === 'custom') {
+        document.getElementById('customPatternDiv').style.display = 'block';
+        document.getElementById('customPattern').value = customPattern;
+    }
+
+    updatePreview();
+
+    // Show/hide custom pattern input
+    document.getElementById('groupSeparator').addEventListener('change', function() {
+        const isCustom = this.value === 'custom';
+        document.getElementById('customPatternDiv').style.display = isCustom ? 'block' : 'none';
+        updatePreview();
+    });
+
+    document.getElementById('customPattern').addEventListener('input', updatePreview);
+});
+
+function updatePreview() {
+    const separator = document.getElementById('groupSeparator').value;
+    const customPattern = document.getElementById('customPattern').value;
+    const examples = ['LEAF-CONFIG-01', 'SPINE_UNDERLAY', 'BorderRouterConfig', 'DC1.CORE'];
+    const preview = document.getElementById('patternPreview');
+
+    let html = '<small class="text-muted">How these configlets would be grouped:</small><div class="mt-2">';
+    examples.forEach(name => {
+        let group = 'Other';
+        if (separator === 'custom' && customPattern) {
+            try {
+                const regex = new RegExp(customPattern);
+                const match = name.match(regex);
+                group = match && match[1] ? match[1] : 'Other';
+            } catch (e) {
+                group = '<span class="text-danger">Invalid Pattern</span>';
+            }
+        } else if (separator && name.includes(separator)) {
+            group = name.split(separator)[0];
+        }
+        html += `<div class="mb-1"><code>${name}</code> → <span class="badge bg-info">${group}</span></div>`;
+    });
+    html += '</div>';
+    preview.innerHTML = html;
+}
+
+function saveGroupingSettings() {
+    const separator = document.getElementById('groupSeparator').value;
+    const customPattern = document.getElementById('customPattern').value;
+
+    localStorage.setItem('groupSeparator', separator);
+    localStorage.setItem('customPattern', customPattern);
+
+    fetch('/api/settings/grouping', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({separator, customPattern})
+    }).then(() => {
+        bootstrap.Modal.getInstance(document.getElementById('groupingSettingsModal')).hide();
+        location.reload();
+    });
+}
+
+// Group management
+function showCreateGroup() {
+    document.getElementById('createGroupForm').style.display = 'block';
+}
+
+function hideCreateGroup() {
+    document.getElementById('createGroupForm').style.display = 'none';
+    document.getElementById('newGroupName').value = '';
+    document.getElementById('newGroupDesc').value = '';
+}
+
+function createGroup() {
+    const name = document.getElementById('newGroupName').value;
+    const description = document.getElementById('newGroupDesc').value;
+    const color = document.getElementById('newGroupColor').value;
+
+    fetch('/api/configlet-groups', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, description, color})
+    }).then(() => {
+        hideCreateGroup();
+        loadGroups();
+    });
+}
+
+function loadGroups() {
+    fetch('/api/configlet-groups')
+        .then(r => r.json())
+        .then(groups => {
+            const list = document.getElementById('groupsList');
+            list.innerHTML = groups.map(g => `
+                <div class="card mb-2">
+                    <div class="card-body d-flex justify-content-between align-items-center">
+                        <div>
+                            <span class="badge bg-${g.color}">${g.name}</span>
+                            <small class="text-muted ms-2">${g.description || ''}</small>
+                        </div>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-danger" onclick="deleteGroup(${g.id})">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        });
+}
+
+function deleteGroup(id) {
+    if (!confirm('Delete this group?')) return;
+    fetch(\`/api/configlet-groups/\${id}\`, {method: 'DELETE'})
+        .then(() => loadGroups());
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const modal = document.getElementById('manageGroupsModal');
+    if (modal) {
+        modal.addEventListener('shown.bs.modal', loadGroups);
+    }
+});
+
+// Multi-select functions
+function updateSelection() {
+    const checked = document.querySelectorAll('.configlet-checkbox:checked');
+    const count = checked.length;
+    document.getElementById('selectedCount').textContent = count;
+    document.getElementById('bulkActionsBar').classList.toggle('d-none', count === 0);
+}
+
+function toggleGroup(checkbox, group) {
+    const groupCheckboxes = document.querySelectorAll(`.configlet-card[data-group="${group}"] .configlet-checkbox`);
+    groupCheckboxes.forEach(cb => cb.checked = checkbox.checked);
+    updateSelection();
+}
+
+function clearSelection() {
+    document.querySelectorAll('.configlet-checkbox').forEach(cb => cb.checked = false);
+    document.querySelectorAll('.select-all-group').forEach(cb => cb.checked = false);
+    updateSelection();
+}
+
+function getSelectedConfiglets() {
+    return Array.from(document.querySelectorAll('.configlet-checkbox:checked')).map(cb => cb.dataset.name);
+}
+
+function bulkApplyToDevices() {
+    const selected = getSelectedConfiglets();
+    if (selected.length === 0) return;
+    // TODO: Show modal to select devices
+    alert(`Apply ${selected.length} configlets to devices (feature coming soon)`);
+}
+
+function bulkExport() {
+    const selected = getSelectedConfiglets();
+    if (selected.length === 0) return;
+    window.location.href = `/api/configlets/export?names=${selected.join(',')}`;
+}
+
+function bulkDelete() {
+    const selected = getSelectedConfiglets();
+    if (selected.length === 0) return;
+    if (!confirm(`Delete ${selected.length} configlets? This cannot be undone.`)) return;
+
+    fetch('/api/configlets/bulk-delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({names: selected})
+    }).then(r => r.json()).then(() => location.reload());
+}
+
+function showBulkGroupAssign() {
+    const selected = getSelectedConfiglets();
+    if (selected.length === 0) return;
+
+    fetch('/api/configlet-groups')
+        .then(r => r.json())
+        .then(groups => {
+            const opts = groups.map(g => `<option value="${g.id}">${g.name}</option>`).join('');
+            const html = `
+                <select id="bulkGroupSelect" class="form-select">
+                    <option value="">Select group...</option>
+                    ${opts}
+                </select>
+            `;
+            if (confirm(`Assign ${selected.length} configlets to a group?`)) {
+                const groupId = prompt('Enter group ID (check Manage Groups):');
+                if (groupId) {
+                    fetch('/api/configlets/assign-group', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({configlets: selected, groupId: parseInt(groupId)})
+                    }).then(() => location.reload());
+                }
+            }
+        });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,37 @@
+# Global Variables
+# These variables are loaded for all devices
+
+# Default VRF settings
+default_vrf: default
+management_vrf: management
+
+# Standard reserved VLANs
+reserved_vlans:
+  mlag_peer: 4094
+  mlag_l3: 4093
+
+# BGP defaults
+bgp_defaults:
+  max_paths: 4
+  ecmp_paths: 4
+
+# Naming conventions
+naming:
+  mlag_domain_prefix: "MLAG_"
+  portchannel_mlag_start: 2000
+  portchannel_server_start: 100
+
+# Common DNS servers
+common_dns_servers:
+  - ip: 8.8.8.8
+    vrf: management
+  - ip: 8.8.4.4
+    vrf: management
+
+# Common NTP servers
+common_ntp_servers:
+  - ip: 0.pool.ntp.org
+    vrf: management
+    prefer: true
+  - ip: 1.pool.ntp.org
+    vrf: management

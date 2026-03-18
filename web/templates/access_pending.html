@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Access Pending - Kármán</title>
+    <link rel="icon" type="image/png" href="/static/img/favicon.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: #020b18;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            padding: 1.5rem 1rem;
+        }
+
+        #starfield {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 0;
+        }
+
+        .nebula {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.12;
+            z-index: 0;
+            pointer-events: none;
+        }
+        .nebula-1 {
+            width: 600px; height: 400px;
+            background: radial-gradient(ellipse, #3b1f6b, transparent 70%);
+            top: -100px; left: -100px;
+            animation: nebula-drift 40s ease-in-out infinite alternate;
+        }
+        .nebula-2 {
+            width: 500px; height: 350px;
+            background: radial-gradient(ellipse, #0d3d6b, transparent 70%);
+            bottom: -80px; right: -80px;
+            animation: nebula-drift 50s ease-in-out infinite alternate-reverse;
+        }
+        .nebula-3 {
+            width: 300px; height: 300px;
+            background: radial-gradient(ellipse, #1a4a2e, transparent 70%);
+            top: 40%; left: 55%;
+            opacity: 0.08;
+            animation: nebula-drift 35s ease-in-out infinite alternate;
+        }
+        @keyframes nebula-drift {
+            from { transform: translate(0, 0) scale(1); }
+            to   { transform: translate(40px, 20px) scale(1.08); }
+        }
+
+        .pending-wrapper {
+            position: relative;
+            z-index: 10;
+            width: 100%;
+            max-width: 480px;
+            text-align: center;
+        }
+
+        .pending-glass {
+            background: rgba(10, 20, 40, 0.72);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            border-radius: 16px;
+            backdrop-filter: blur(18px) saturate(1.4);
+            -webkit-backdrop-filter: blur(18px) saturate(1.4);
+            box-shadow:
+                0 0 0 1px rgba(100, 160, 255, 0.08),
+                0 8px 32px rgba(0, 0, 0, 0.6),
+                inset 0 1px 0 rgba(255, 255, 255, 0.06);
+            padding: 3rem 2.5rem;
+        }
+
+        .pending-icon {
+            font-size: 3.5rem;
+            background: linear-gradient(135deg, #ffd060, #ffaa40);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            filter: drop-shadow(0 0 14px rgba(255, 190, 60, 0.45));
+            display: inline-block;
+            margin-bottom: 1.25rem;
+            animation: hourglass-spin 3s ease-in-out infinite;
+        }
+        @keyframes hourglass-spin {
+            0%, 40%  { transform: rotate(0deg);   }
+            50%, 90% { transform: rotate(180deg); }
+            100%     { transform: rotate(180deg); }
+        }
+
+        .pending-title {
+            color: #f0f6ff;
+            font-size: 1.4rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            margin-bottom: 0.75rem;
+        }
+
+        .pending-lead {
+            color: rgba(190, 215, 255, 0.65);
+            font-size: 0.95rem;
+            line-height: 1.65;
+            margin-bottom: 1.75rem;
+        }
+
+        /* Info box */
+        .info-box {
+            background: rgba(96, 160, 255, 0.08);
+            border: 1px solid rgba(96, 160, 255, 0.18);
+            border-radius: 10px;
+            padding: 1.25rem 1.5rem;
+            text-align: left;
+            margin-bottom: 1.5rem;
+        }
+
+        .info-box-title {
+            color: #a0c8ff;
+            font-size: 0.82rem;
+            font-weight: 600;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+            margin-bottom: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .info-box ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .info-box li {
+            color: rgba(190, 215, 255, 0.7);
+            font-size: 0.88rem;
+            line-height: 1.5;
+            padding: 0.3rem 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.6rem;
+        }
+
+        .info-box li i {
+            color: #60a0ff;
+            margin-top: 0.15rem;
+            flex-shrink: 0;
+        }
+
+        .pending-note {
+            color: rgba(150, 180, 230, 0.4);
+            font-size: 0.78rem;
+            margin-bottom: 1.75rem;
+        }
+
+        .btn-back {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.6rem 1.6rem;
+            background: transparent;
+            border: 1px solid rgba(96, 160, 255, 0.35);
+            border-radius: 8px;
+            color: #80b8ff;
+            font-size: 0.9rem;
+            font-weight: 500;
+            text-decoration: none;
+            transition: background 0.2s, border-color 0.2s, color 0.2s;
+        }
+        .btn-back:hover {
+            background: rgba(96, 160, 255, 0.10);
+            border-color: rgba(96, 160, 255, 0.60);
+            color: #b0d4ff;
+        }
+    </style>
+</head>
+<body>
+    <div class="nebula nebula-1"></div>
+    <div class="nebula nebula-2"></div>
+    <div class="nebula nebula-3"></div>
+    <canvas id="starfield"></canvas>
+
+    <div class="pending-wrapper">
+        <div class="pending-glass">
+            <div class="pending-icon"><i class="bi bi-hourglass-split"></i></div>
+            <div class="pending-title">Access Request Pending</div>
+            <p class="pending-lead">
+                Your request has been submitted and is awaiting administrator approval.
+            </p>
+
+            <div class="info-box">
+                <div class="info-box-title"><i class="bi bi-info-circle"></i> What happens next?</div>
+                <ul>
+                    <li><i class="bi bi-bell"></i> The administrator has been notified of your request</li>
+                    <li><i class="bi bi-envelope"></i> You'll receive an email once your request is reviewed</li>
+                    <li><i class="bi bi-box-arrow-in-right"></i> If approved, you can log in with your credentials</li>
+                </ul>
+            </div>
+
+            <p class="pending-note">This usually takes 1–2 business days. Please check your email regularly.</p>
+
+            <a href="{{ url_for('login') }}" class="btn-back">
+                <i class="bi bi-arrow-left"></i> Back to Login
+            </a>
+        </div>
+    </div>
+
+    <script>
+    (function () {
+        const canvas = document.getElementById('starfield');
+        const ctx    = canvas.getContext('2d');
+
+        function resize() {
+            canvas.width  = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', () => { resize(); buildStars(); });
+        resize();
+
+        const STAR_COUNT = 320;
+        let stars = [];
+
+        function buildStars() {
+            stars = [];
+            for (let i = 0; i < STAR_COUNT; i++) {
+                const r = Math.random();
+                stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    size: r < 0.70 ? 0.5 + Math.random() * 0.6
+                         : r < 0.92 ? 1.0 + Math.random() * 0.8
+                         :             1.8 + Math.random() * 1.0,
+                    alpha: 0.35 + Math.random() * 0.65,
+                    alphaTarget: 0.25 + Math.random() * 0.75,
+                    alphaSpeed:  0.003 + Math.random() * 0.012,
+                    hue: Math.random() < 0.15
+                           ? `hsl(${30  + Math.random()*30},  60%, 95%)`
+                           : `hsl(${200 + Math.random()*60}, 60%, 95%)`,
+                });
+            }
+        }
+        buildStars();
+
+        let shooters = [];
+
+        function spawnShooter() {
+            const edge   = Math.floor(Math.random() * 4);
+            const spread = 40;
+            let x, y, baseDeg;
+            switch (edge) {
+                case 0: x = Math.random() * canvas.width;  y = -10;                baseDeg = 90;  break;
+                case 1: x = canvas.width + 10;              y = Math.random() * canvas.height; baseDeg = 180; break;
+                case 2: x = Math.random() * canvas.width;  y = canvas.height + 10; baseDeg = 270; break;
+                default: x = -10; y = Math.random() * canvas.height; baseDeg = 0; break;
+            }
+            const angle = (baseDeg + (Math.random() * spread * 2 - spread)) * Math.PI / 180;
+            shooters.push({
+                x, y, angle,
+                speed:     9 + Math.random() * 14,
+                length:    90 + Math.random() * 180,
+                alpha:     0,
+                phase:     'fadein',
+                traveled:  0,
+                maxTravel: 350 + Math.random() * 400,
+                width:     1.0 + Math.random() * 1.2,
+            });
+        }
+
+        let nextShooterIn   = 1800 + Math.random() * 3000;
+        let lastShooterTime = 0;
+
+        function draw(ts) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            for (const s of stars) {
+                s.alpha += s.alpha < s.alphaTarget ? s.alphaSpeed : -s.alphaSpeed;
+                if (Math.abs(s.alpha - s.alphaTarget) < 0.01) {
+                    s.alphaTarget = 0.15 + Math.random() * 0.85;
+                    s.alphaSpeed  = 0.002 + Math.random() * 0.010;
+                }
+                ctx.beginPath();
+                ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+                ctx.fillStyle = s.hue.replace(')', `, ${s.alpha.toFixed(3)})`).replace('hsl(', 'hsla(');
+                ctx.fill();
+            }
+
+            if (ts - lastShooterTime > nextShooterIn) {
+                spawnShooter();
+                if (Math.random() < 0.18) spawnShooter();
+                lastShooterTime = ts;
+                nextShooterIn   = 1500 + Math.random() * 4000;
+            }
+
+            for (let i = shooters.length - 1; i >= 0; i--) {
+                const s  = shooters[i];
+                const dx = Math.cos(s.angle) * s.speed;
+                const dy = Math.sin(s.angle) * s.speed;
+                if      (s.phase === 'fadein') { s.alpha += 0.08; if (s.alpha >= 1) { s.alpha = 1; s.phase = 'travel'; } }
+                else if (s.phase === 'travel') { s.traveled += s.speed; if (s.traveled > s.maxTravel) s.phase = 'fadeout'; }
+                else { s.alpha -= 0.05; if (s.alpha <= 0) { shooters.splice(i, 1); continue; } }
+
+                const tx = s.x - Math.cos(s.angle) * s.length;
+                const ty = s.y - Math.sin(s.angle) * s.length;
+                const grad = ctx.createLinearGradient(tx, ty, s.x, s.y);
+                grad.addColorStop(0,   `rgba(255,255,255,0)`);
+                grad.addColorStop(0.6, `rgba(200,230,255,${(s.alpha*0.4).toFixed(3)})`);
+                grad.addColorStop(1,   `rgba(255,255,255,${s.alpha.toFixed(3)})`);
+                ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(s.x, s.y);
+                ctx.strokeStyle = grad; ctx.lineWidth = s.width; ctx.lineCap = 'round'; ctx.stroke();
+
+                const hg = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, 4);
+                hg.addColorStop(0, `rgba(255,255,255,${s.alpha.toFixed(3)})`);
+                hg.addColorStop(1, `rgba(200,230,255,0)`);
+                ctx.beginPath(); ctx.arc(s.x, s.y, 4, 0, Math.PI*2);
+                ctx.fillStyle = hg; ctx.fill();
+
+                s.x += dx; s.y += dy;
+            }
+            requestAnimationFrame(draw);
+        }
+        requestAnimationFrame(draw);
+    })();
+    </script>
+</body>
+</html>

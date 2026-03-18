@@ -1,0 +1,53 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Database
+*.db
+*.db-journal
+!migrations/*.db
+
+# Environment
+.env
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/*.log
+*.log
+
+# Output
+output/generated-configs/*.cfg
+
+# Temporary files
+*.tmp
+*.bak
+*.backup_*
+
+# Python virtual environment
+venv/
+ENV/
+env/
+
+# Claude Code project files
+.claude/
+
+# Configlets — contain real device configs (sensitive)
+configlets/*.cfg
+
+# Runtime / scratch data
+data/
+screenshots/
+
+# MIB archive
+*.zip

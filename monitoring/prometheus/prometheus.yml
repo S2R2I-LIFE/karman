@@ -1,0 +1,24 @@
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  scrape_timeout:      10s
+
+scrape_configs:
+
+  # gnmic dial-in metrics (gnmic connects out to devices on port 6030)
+  # Update port here if TELEGRAF_METRICS_PORT was changed in .env
+  - job_name: 'gnmic'
+    static_configs:
+      - targets: ['localhost:9273']
+
+  # gnmic dial-out ingest metrics (devices connect in to gnmic-listener on port 9910)
+  # Update port here if GNMIC_INGEST_METRICS_PORT was changed in .env
+  - job_name: 'gnmic-ingest'
+    static_configs:
+      - targets: ['localhost:9274']
+
+  # Prometheus self-monitoring
+  # Update port here if PROMETHEUS_PORT was changed in .env
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9091']
