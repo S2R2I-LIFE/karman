@@ -704,6 +704,9 @@ function saveCredentials() {
     refreshTelemetry();
 }
 
+// Inventory seeded from server — always present at page load
+const INVENTORY = {{ device_list | tojson }};
+
 // Telemetry functions
 let refreshTimeout = null;
 let statusTimeout = null;
@@ -738,7 +741,7 @@ function updateDeviceStatus(statusData) {
 
     statusData.forEach(status => {
         const cachedDevice = cachedDevices.find(d => d.hostname === status.hostname);
-        if (cachedDevice && cachedDevice.telemetry) {
+        if (cachedDevice && cachedDevice.telemetry && !cachedDevice.telemetry.loading) {
             // The fast TCP check is authoritative for DOWN only.
             // It must not promote a device to UP — that requires full telemetry
             // to confirm. This prevents false UP flashes for gNMI devices where
@@ -790,7 +793,18 @@ function refreshTelemetry() {
         .then(r => r.json())
         .then(data => {
             if (data.success) {
-                displayTelemetry(data.devices);
+                // Merge telemetry into existing cached entries by hostname
+                // so inventory-seeded cards update in-place rather than rebuilding
+                data.devices.forEach(updated => {
+                    const idx = cachedDevices.findIndex(d => d.hostname === updated.hostname);
+                    if (idx >= 0) {
+                        // Preserve inventory fields (site, model, etc.), overlay telemetry
+                        cachedDevices[idx] = { ...cachedDevices[idx], ...updated };
+                    } else {
+                        cachedDevices.push(updated);
+                    }
+                });
+                displayTelemetry(cachedDevices);
             } else if (data.error && data.error.includes('auth')) {
                 showCredentialsModal();
             }
@@ -905,6 +919,7 @@ function sortDevices(devices) {
 // ── Priority scoring (lower = more urgent) ────────────────────────────────────
 function devicePriority(device) {
     const t = device.telemetry;
+    if (t.loading) return 5; // loading skeleton — sort to bottom
     if (!t.reachable) return 0;
     if (t.temperature?.sensors?.some(s => s.status === 'critical')) return 1;
     if (t.temperature?.sensors?.some(s => s.status === 'warning'))  return 2;
@@ -912,10 +927,16 @@ function devicePriority(device) {
     return 4;
 }
 
-// ── Site extraction (first segment before - or _) ────────────────────────────
-function getSite(hostname) {
-    const m = hostname.match(/^([A-Za-z0-9]+)/);
-    return m ? m[1].toUpperCase() : 'OTHER';
+// ── Site extraction — prefer DB site field, fall back to hostname prefix ──────
+function getSite(device) {
+    if (typeof device === 'string') {
+        // Legacy: called with just a hostname string
+        const m = device.match(/^([A-Za-z0-9]+)/);
+        return m ? m[1].toUpperCase() : 'UNGROUPED';
+    }
+    if (device.site && device.site.trim()) return device.site.trim().toUpperCase();
+    const m = device.hostname.match(/^([A-Za-z0-9]+)/);
+    return m ? m[1].toUpperCase() : 'UNGROUPED';
 }
 
 // ── Card builders ─────────────────────────────────────────────────────────────
@@ -946,15 +967,47 @@ function buildDeviceStats(device) {
 
 function normalCard(device) {
     const t = device.telemetry;
-    const statusClass = t.reachable ? 'success' : 'danger';
-    const statusIcon  = t.reachable ? 'check-circle-fill' : 'x-circle-fill';
     const p = devicePriority(device);
     const borderClass = p === 0 ? 'device-card-down' : p <= 2 ? 'device-card-warning' : '';
+
+    // Loading skeleton
+    if (t.loading) {
+        return `
+        <div class="col-lg-6 mb-3">
+            <div class="card h-100 placeholder-glow" data-device-hostname="${device.hostname}"
+                 style="cursor:pointer;" onclick="window.location.href='/devices/${device.hostname}'">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-hdd-network"></i> <strong>${device.hostname}</strong></span>
+                    <span class="badge bg-secondary placeholder col-3"></span>
+                </div>
+                <div class="card-body">
+                    <small class="text-muted d-block mb-3"><i class="bi bi-globe"></i> ${device.ip || '—'}</small>
+                    <div class="row text-center mb-3">
+                        <div class="col-3"><span class="placeholder col-10 rounded d-block mx-auto" style="height:1.4rem;"></span></div>
+                        <div class="col-3"><span class="placeholder col-10 rounded d-block mx-auto" style="height:1.4rem;"></span></div>
+                        <div class="col-3"><span class="placeholder col-10 rounded d-block mx-auto" style="height:1.4rem;"></span></div>
+                        <div class="col-3"><span class="placeholder col-10 rounded d-block mx-auto" style="height:1.4rem;"></span></div>
+                    </div>
+                    <span class="placeholder col-8 rounded d-block mb-2" style="height:1rem;"></span>
+                    <span class="placeholder col-5 rounded d-block" style="height:1rem;"></span>
+                </div>
+                <div class="card-footer text-end">
+                    <a href="/devices/${device.hostname}" class="btn btn-sm btn-outline-secondary disabled">
+                        <i class="bi bi-eye"></i> View Details
+                    </a>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    const statusClass = t.reachable ? 'success' : 'danger';
+    const statusIcon  = t.reachable ? 'check-circle-fill' : 'x-circle-fill';
     const { tempStatus, tempIcon, avgTemp, topInterfaces, totalErrors } = buildDeviceStats(device);
     const td = toDisplay(avgTemp);
     return `
         <div class="col-lg-6 mb-3">
-            <div class="card h-100 ${borderClass}" data-device-hostname="${device.hostname}">
+            <div class="card h-100 ${borderClass} dashboard-card-clickable" data-device-hostname="${device.hostname}"
+                 style="cursor:pointer;" onclick="window.location.href='/devices/${device.hostname}'">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <span><i class="bi bi-hdd-network"></i> <strong>${device.hostname}</strong></span>
                     <span class="badge bg-${statusClass} device-status-badge">
@@ -979,7 +1032,8 @@ function normalCard(device) {
                             </div>
                             <div class="col-3">
                                 <small class="text-muted d-block">Temp</small>
-                                <span class="badge bg-${tempStatus} temp-toggle" onclick="toggleTempUnit()"
+                                <span class="badge bg-${tempStatus} temp-toggle"
+                                      onclick="event.stopPropagation(); toggleTempUnit();"
                                       title="Click to switch °C / °F" style="cursor:pointer;">
                                     <i class="bi bi-${tempIcon}"></i> ${td.val}${td.unit}
                                 </span>
@@ -1008,33 +1062,57 @@ function normalCard(device) {
                                     ${t.temperature.sensors.slice(0, 3).map(sensor => {
                                         const sb = sensor.status === 'ok' ? 'success' : sensor.status === 'warning' ? 'warning' : 'danger';
                                         const st = toDisplay(sensor.temperature);
-                                        return `<span class="badge bg-${sb} me-1 temp-toggle" onclick="toggleTempUnit()" title="Click to switch °C / °F" style="cursor:pointer;">${sensor.name}: ${st.val}${st.unit}</span>`;
+                                        return `<span class="badge bg-${sb} me-1 temp-toggle" onclick="event.stopPropagation(); toggleTempUnit();" title="Click to switch °C / °F" style="cursor:pointer;">${sensor.name}: ${st.val}${st.unit}</span>`;
                                     }).join('')}
                                 </div>
                             </div>` : ''}
                     ` : `<div class="alert alert-danger mb-0"><small>${t.error || 'Device unreachable'}</small></div>`}
                 </div>
-                ${t.reachable ? `
-                    <div class="card-footer text-end">
-                        <a href="/devices/${device.hostname}" class="btn btn-sm btn-outline-primary">
-                            <i class="bi bi-eye"></i> View Details
-                        </a>
-                    </div>` : ''}
+                <div class="card-footer text-end">
+                    <a href="/devices/${device.hostname}" class="btn btn-sm btn-outline-primary"
+                       onclick="event.stopPropagation();">
+                        <i class="bi bi-eye"></i> View Details
+                    </a>
+                </div>
             </div>
         </div>`;
 }
 
 function compactCard(device) {
     const t = device.telemetry;
-    const statusClass = t.reachable ? 'success' : 'danger';
-    const statusIcon  = t.reachable ? 'check-circle-fill' : 'x-circle-fill';
     const p = devicePriority(device);
     const borderClass = p === 0 ? 'device-card-down' : p <= 2 ? 'device-card-warning' : '';
+
+    // Loading skeleton
+    if (t.loading) {
+        return `
+        <div class="col-xl-3 col-lg-4 col-md-6 mb-2">
+            <div class="card compact-device-card placeholder-glow" data-device-hostname="${device.hostname}"
+                 style="cursor:pointer;" onclick="window.location.href='/devices/${device.hostname}'">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="hostname" title="${device.hostname}">
+                            <i class="bi bi-hdd-network" style="font-size:0.75rem;"></i> ${device.hostname}
+                        </span>
+                        <span class="badge bg-secondary placeholder" style="font-size:0.65rem;width:2.5rem;"></span>
+                    </div>
+                    <div class="d-flex stat-row flex-wrap">
+                        <span class="text-muted">${device.ip || '—'}</span>
+                        <span class="placeholder rounded" style="width:3.5rem;height:0.9rem;"></span>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    const statusClass = t.reachable ? 'success' : 'danger';
+    const statusIcon  = t.reachable ? 'check-circle-fill' : 'x-circle-fill';
     const { tempStatus, tempIcon, avgTemp } = buildDeviceStats(device);
     const td = toDisplay(avgTemp);
     return `
         <div class="col-xl-3 col-lg-4 col-md-6 mb-2">
-            <div class="card compact-device-card ${borderClass}" data-device-hostname="${device.hostname}">
+            <div class="card compact-device-card ${borderClass} dashboard-card-clickable" data-device-hostname="${device.hostname}"
+                 style="cursor:pointer;" onclick="window.location.href='/devices/${device.hostname}'">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-center mb-1">
                         <span class="hostname" title="${device.hostname}">
@@ -1049,7 +1127,8 @@ function compactCard(device) {
                             <span class="text-muted">${device.ip}</span>
                             <span>CPU <strong>${t.system?.cpu_percent || 0}%</strong></span>
                             <span>Mem <strong>${t.system?.memory_percent || 0}%</strong></span>
-                            <span class="badge bg-${tempStatus} temp-toggle" onclick="toggleTempUnit()"
+                            <span class="badge bg-${tempStatus} temp-toggle"
+                                  onclick="event.stopPropagation(); toggleTempUnit();"
                                   title="Click to switch °C / °F" style="cursor:pointer;font-size:0.65rem;">
                                 <i class="bi bi-${tempIcon}"></i> ${td.val}${td.unit}
                             </span>
@@ -1058,10 +1137,11 @@ function compactCard(device) {
                             <span class="badge bg-success" style="font-size:0.65rem;">${t.interfaces?.up || 0} UP</span>
                             <span class="badge bg-danger" style="font-size:0.65rem;">${t.interfaces?.down || 0} DOWN</span>
                         </div>
-                        <a href="/devices/${device.hostname}" class="btn btn-outline-primary btn-detail mt-1">
-                            <i class="bi bi-eye"></i> Details
-                        </a>
                     ` : `<div class="text-danger" style="font-size:0.75rem;"><i class="bi bi-exclamation-triangle"></i> ${t.error || 'Unreachable'}</div>`}
+                    <a href="/devices/${device.hostname}" class="btn btn-outline-primary btn-detail mt-1"
+                       onclick="event.stopPropagation();">
+                        <i class="bi bi-eye"></i> Details
+                    </a>
                 </div>
             </div>
         </div>`;
@@ -1232,22 +1312,28 @@ function renderGroupsList() {
 
 function populateDeviceCheckboxes(selectedHostnames = []) {
     const container = document.getElementById('deviceCheckboxList');
-    const allDevices = cachedDevices.length > 0 ? cachedDevices : [];
+    // Use telemetry cache if populated, otherwise fall back to inventory seed
+    const allDevices = cachedDevices.length > 0
+        ? cachedDevices
+        : INVENTORY.map(d => ({ hostname: d.hostname, ip: d.ip, telemetry: { reachable: null, loading: true } }));
     if (allDevices.length === 0) {
         container.innerHTML = '<span class="text-muted small">No devices available.</span>';
         return;
     }
     const sorted = [...allDevices].sort((a, b) => a.hostname.localeCompare(b.hostname));
-    container.innerHTML = sorted.map(d => `
+    container.innerHTML = sorted.map(d => {
+        const dotClass = d.telemetry?.loading ? 'dot-unknown' : d.telemetry?.reachable ? 'dot-up' : 'dot-down';
+        return `
         <div class="form-check device-checkbox-item" data-hostname="${d.hostname.toLowerCase()}">
             <input class="form-check-input" type="checkbox" id="dchk-${d.hostname}"
                    value="${d.hostname}" ${selectedHostnames.includes(d.hostname) ? 'checked' : ''}>
             <label class="form-check-label d-flex align-items-center gap-2" for="dchk-${d.hostname}">
-                <span class="status-dot ${d.telemetry?.reachable ? 'dot-up' : 'dot-down'}" style="width:9px;height:9px;flex-shrink:0;"></span>
+                <span class="status-dot ${dotClass}" style="width:9px;height:9px;flex-shrink:0;"></span>
                 <span>${d.hostname}</span>
                 <small class="text-muted">${d.ip || ''}</small>
             </label>
-        </div>`).join('');
+        </div>`;
+    }).join('');
 }
 
 function filterGroupDevices() {
@@ -1333,10 +1419,10 @@ function displayTelemetry(devices) {
     let html = '';
 
     if (groupMode === 'auto') {
-        // Group by site prefix extracted from hostname
+        // Group by site field from inventory, falling back to hostname prefix
         const siteMap = new Map();
         sorted.forEach(d => {
-            const site = getSite(d.hostname);
+            const site = getSite(d);
             if (!siteMap.has(site)) siteMap.set(site, []);
             siteMap.get(site).push(d);
         });
@@ -1428,10 +1514,28 @@ document.addEventListener('DOMContentLoaded', function() {
         if (sel) sel.value = savedSort;
     }
 
-    // Restore group mode
+    // Seed cachedDevices from inventory immediately — cards appear without waiting for telemetry
+    if (INVENTORY.length > 0) {
+        cachedDevices = INVENTORY.map(d => ({
+            hostname: d.hostname,
+            ip: d.ip,
+            site: d.site,
+            model: d.model,
+            eos_version: d.eos_version,
+            management_type: d.management_type,
+            telemetry: { reachable: null, loading: true }
+        }));
+        document.getElementById('lastRefreshTime').textContent = 'Loading telemetry…';
+    }
+
+    // Restore group mode (must happen after cachedDevices is seeded)
     const savedGroupMode = localStorage.getItem('dashGroupMode') || 'auto';
     setGroupMode(savedGroupMode);
-    if (savedGroupMode === 'custom') loadDeviceGroups();
+    if (savedGroupMode === 'custom') {
+        loadDeviceGroups().then(() => displayTelemetry(cachedDevices));
+    } else {
+        displayTelemetry(cachedDevices);
+    }
 
     fixWarningBadgeColors();
     refreshTelemetry();          // Full telemetry (30s cycle)

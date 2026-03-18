@@ -430,12 +430,22 @@ def dashboard():
     # Recent activity
     recent_tasks = task_mgr.list_tasks()[:5]
 
-    # Device breakdown by role
+    # Device breakdown by role + inventory list for immediate card rendering
     device_roles = {}
+    device_list = []
     for hostname in devices:
         device = inventory_mgr.get_device(hostname)
         role = device.role.value
         device_roles[role] = device_roles.get(role, 0) + 1
+        device_list.append({
+            'hostname': device.hostname,
+            'ip': device.ip_address,
+            'model': device.model or '',
+            'eos_version': device.eos_version or '',
+            'site': device.site or '',
+            'role': role,
+            'management_type': device.management_type.value,
+        })
 
     return render_template('dashboard.html',
                          total_devices=total_devices,
@@ -444,7 +454,8 @@ def dashboard():
                          total_configlets=total_configlets,
                          pending_tasks=pending_tasks,
                          recent_tasks=recent_tasks,
-                         device_roles=device_roles)
+                         device_roles=device_roles,
+                         device_list=device_list)
 
 # ==================== Device Routes ====================
 
