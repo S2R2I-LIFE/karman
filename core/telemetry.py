@@ -500,23 +500,101 @@ class DeviceTelemetry:
             # Determine connector type
             is_eapi = type(connector).__name__ == 'EAPIConnector'
 
-            # Version info
             if is_eapi:
+                # ── eAPI: ONE batched HTTP request for all telemetry ──────────────────
+                # Batching is critical: 6 sequential calls each take up to 10s on a
+                # loaded vEOS node, pushing total collection time past the 35s timeout
+                # and causing spurious reachable=False / "Collection timeout" entries.
+                # A single node.enable([cmd1, cmd2, ...]) does one HTTPS round-trip.
+                EAPI_CMDS = [
+                    'show version',                        # idx 0
+                    'show interfaces status',              # idx 1
+                    'show processes top once',             # idx 2
+                    'show system environment temperature', # idx 3
+                ]
                 try:
-                    result = connector.execute_commands(['show version'])
-                    # eAPI returns JSON data directly in result
-                    if result and len(result) > 0:
-                        data = result[0].get('result', result[0]) if isinstance(result[0], dict) else {}
-                        telemetry['version_info'] = {
-                            'version': data.get('version', ''),
-                            'model': data.get('modelName', ''),
-                            'uptime': str(data.get('uptime', '')),
-                            'serial': data.get('serialNumber', '')
-                        }
+                    result = connector.execute_commands(EAPI_CMDS)
                 except Exception as e:
-                    print(f"Error getting version info via eAPI: {e}")
-                    telemetry['version_info'] = {}
+                    print(f"eAPI batch command failed: {e}")
+                    result = []
+
+                def _r(idx):
+                    """Return the result dict for command at index, or {}.
+
+                    Some commands return text output; in that case result['result']
+                    is a string. Always return a dict so .get() calls are safe.
+                    """
+                    if not result or idx >= len(result):
+                        return {}
+                    item = result[idx]
+                    if not isinstance(item, dict):
+                        return {}
+                    r = item.get('result', {})
+                    return r if isinstance(r, dict) else {}
+
+                # Version info
+                d = _r(0)
+                telemetry['version_info'] = {
+                    'version': d.get('version', ''),
+                    'model':   d.get('modelName', ''),
+                    'uptime':  str(d.get('uptime', '')),
+                    'serial':  d.get('serialNumber', ''),
+                }
+
+                # Interface status
+                interfaces_raw = _r(1).get('interfaceStatuses', {})
+                stats = {'total': 0, 'up': 0, 'down': 0, 'admin_down': 0}
+                for intf_data in interfaces_raw.values():
+                    stats['total'] += 1
+                    link = intf_data.get('linkStatus', '').lower()
+                    proto = intf_data.get('lineProtocolStatus', '').lower()
+                    if link == 'connected' or proto == 'up':
+                        stats['up'] += 1
+                    elif link == 'disabled':
+                        stats['admin_down'] += 1
+                    else:
+                        stats['down'] += 1
+                telemetry['interfaces'] = stats
+
+                # CPU / Memory — eAPI returns structured JSON from show processes top once
+                d = _r(2)
+                cpu_info = d.get('cpuInfo', {}).get('%Cpu(s)', {})
+                mem_info = d.get('memInfo', {}).get('physicalMem', {})
+                if cpu_info or mem_info:
+                    idle = cpu_info.get('idle', 100)
+                    cpu_pct = round(100 - idle, 1)
+                    mem_total = mem_info.get('memTotal', 0)
+                    mem_free = mem_info.get('memFree', 0)
+                    mem_buf = mem_info.get('memBuffer', 0)
+                    mem_pct = round((mem_total - mem_free - mem_buf) / mem_total * 100, 1) if mem_total else 0
+                    telemetry['system'] = {'cpu_percent': cpu_pct, 'memory_percent': mem_pct}
+                else:
+                    # Fallback: try text output field (SSH path / older EOS)
+                    output = d.get('output', '')
+                    if output:
+                        telemetry['system'] = DeviceTelemetry.parse_cpu_memory(output)
+                    else:
+                        telemetry['system'] = {'cpu_percent': 0, 'memory_percent': 0}
+
+                # Temperature
+                sensors = []
+                for s in _r(3).get('tempSensors', []):
+                    sensors.append({
+                        'name':               s.get('name', 'Unknown'),
+                        'temperature':        s.get('currentTemperature', 0),
+                        'warning_threshold':  s.get('overheatThreshold', 75),
+                        'critical_threshold': s.get('criticalThreshold', 95),
+                        'status':             'ok' if not s.get('inAlertState') else 'warning',
+                    })
+                telemetry['temperature'] = {'sensors': sensors, 'count': len(sensors)}
+
+                # Counters and rates are not displayed on the dashboard — the
+                # Metrics tab fetches them on demand via /api/devices/<h>/live-metrics.
+                telemetry['interface_counters'] = {}
+                telemetry['interface_rates'] = {}
+
             else:
+                # ── SSH: sequential text commands ────────────────────────────────────
                 try:
                     output = connector.execute_command('show version')
                     telemetry['version_info'] = DeviceTelemetry.parse_version(output)
@@ -524,32 +602,6 @@ class DeviceTelemetry:
                     print(f"Error getting version info via SSH: {e}")
                     telemetry['version_info'] = {}
 
-            # Interface status
-            if is_eapi:
-                try:
-                    result = connector.execute_commands(['show interfaces status'])
-                    # eAPI returns structured interface data
-                    if result and len(result) > 0:
-                        data = result[0].get('result', result[0]) if isinstance(result[0], dict) else {}
-                        interfaces = data.get('interfaceStatuses', {})
-                        stats = {'total': 0, 'up': 0, 'down': 0, 'admin_down': 0}
-                        for intf_name, intf_data in interfaces.items():
-                            stats['total'] += 1
-                            link_status = intf_data.get('linkStatus', '').lower()
-                            line_protocol = intf_data.get('lineProtocolStatus', '').lower()
-                            if link_status == 'connected' or line_protocol == 'up':
-                                stats['up'] += 1
-                            elif link_status == 'disabled':
-                                stats['admin_down'] += 1
-                            else:
-                                stats['down'] += 1
-                        telemetry['interfaces'] = stats
-                    else:
-                        telemetry['interfaces'] = {'total': 0, 'up': 0, 'down': 0, 'admin_down': 0}
-                except Exception as e:
-                    print(f"Error getting interface status via eAPI: {e}")
-                    telemetry['interfaces'] = {'total': 0, 'up': 0, 'down': 0, 'admin_down': 0}
-            else:
                 try:
                     output = connector.execute_command('show interfaces status')
                     telemetry['interfaces'] = DeviceTelemetry.parse_interfaces_status(output)
@@ -557,107 +609,22 @@ class DeviceTelemetry:
                     print(f"Error getting interface status via SSH: {e}")
                     telemetry['interfaces'] = {'total': 0, 'up': 0, 'down': 0, 'admin_down': 0}
 
-            # System resources
-            try:
-                if is_eapi:
-                    result = connector.execute_commands(['show processes top once'])
-                    # eAPI may return text output for 'show processes top'
-                    if result and len(result) > 0:
-                        data = result[0].get('result', result[0]) if isinstance(result[0], dict) else {}
-                        # Try to get text output if available, otherwise use structured data
-                        if 'output' in data:
-                            output = data['output']
-                            telemetry['system'] = DeviceTelemetry.parse_cpu_memory(output)
-                        else:
-                            # Fallback if no CPU/memory data available
-                            telemetry['system'] = {'cpu_percent': 0, 'memory_percent': 0}
-                    else:
-                        telemetry['system'] = {'cpu_percent': 0, 'memory_percent': 0}
-                else:
+                try:
                     output = connector.execute_command('show processes top once')
                     telemetry['system'] = DeviceTelemetry.parse_cpu_memory(output)
-            except Exception as e:
-                print(f"Error getting system resources: {e}")
-                telemetry['system'] = {'cpu_percent': 0, 'memory_percent': 0}
+                except Exception as e:
+                    print(f"Error getting system resources via SSH: {e}")
+                    telemetry['system'] = {'cpu_percent': 0, 'memory_percent': 0}
 
-            # Temperature sensors
-            try:
-                if is_eapi:
-                    result = connector.execute_commands(['show system environment temperature'])
-                    if result and len(result) > 0:
-                        data = result[0].get('result', result[0]) if isinstance(result[0], dict) else {}
-                        # eAPI temperature is structured, convert to similar format
-                        sensors = []
-                        if 'tempSensors' in data:
-                            for sensor_data in data.get('tempSensors', []):
-                                sensors.append({
-                                    'name': sensor_data.get('name', 'Unknown'),
-                                    'temperature': sensor_data.get('currentTemperature', 0),
-                                    'warning_threshold': sensor_data.get('overheatThreshold', 75),
-                                    'critical_threshold': sensor_data.get('criticalThreshold', 95),
-                                    'status': 'ok' if sensor_data.get('inAlertState', False) == False else 'warning'
-                                })
-                        telemetry['temperature'] = {'sensors': sensors, 'count': len(sensors)}
-                    else:
-                        telemetry['temperature'] = {'sensors': [], 'count': 0}
-                else:
+                try:
                     output = connector.execute_command('show system environment temperature')
                     telemetry['temperature'] = DeviceTelemetry.parse_temperature(output)
-            except Exception as e:
-                print(f"Error getting temperature: {e}")
-                telemetry['temperature'] = {'sensors': [], 'count': 0}
+                except Exception as e:
+                    print(f"Error getting temperature via SSH: {e}")
+                    telemetry['temperature'] = {'sensors': [], 'count': 0}
 
-            # Interface counters (errors/traffic)
-            try:
-                if is_eapi:
-                    result = connector.execute_commands(['show interfaces counters'])
-                    if result and len(result) > 0:
-                        data = result[0].get('result', result[0]) if isinstance(result[0], dict) else {}
-                        # eAPI returns structured counter data
-                        interfaces = {}
-                        if 'interfaces' in data:
-                            for intf_name, intf_data in data.get('interfaces', {}).items():
-                                counters = intf_data.get('interfaceCounters', {})
-                                interfaces[intf_name] = {
-                                    'in_octets': counters.get('inOctets', 0),
-                                    'in_pkts': counters.get('inUcastPkts', 0),
-                                    'in_errors': counters.get('inErrors', 0),
-                                    'out_octets': counters.get('outOctets', 0),
-                                    'out_pkts': counters.get('outUcastPkts', 0),
-                                    'out_errors': counters.get('outErrors', 0)
-                                }
-                        telemetry['interface_counters'] = interfaces
-                    else:
-                        telemetry['interface_counters'] = {}
-                else:
-                    output = connector.execute_command('show interfaces counters')
-                    telemetry['interface_counters'] = DeviceTelemetry.parse_interface_counters(output)
-            except Exception as e:
-                print(f"Error getting interface counters: {e}")
+                # Counters/rates fetched on demand by Metrics tab, not needed here.
                 telemetry['interface_counters'] = {}
-
-            # Interface bandwidth rates
-            try:
-                if is_eapi:
-                    result = connector.execute_commands(['show interfaces counters rates'])
-                    if result and len(result) > 0:
-                        data = result[0].get('result', result[0]) if isinstance(result[0], dict) else {}
-                        # eAPI returns structured rate data
-                        interfaces = {}
-                        if 'interfaces' in data:
-                            for intf_name, intf_data in data.get('interfaces', {}).items():
-                                interfaces[intf_name] = {
-                                    'in_bps': intf_data.get('inBitsPerSecond', 0),
-                                    'out_bps': intf_data.get('outBitsPerSecond', 0)
-                                }
-                        telemetry['interface_rates'] = interfaces
-                    else:
-                        telemetry['interface_rates'] = {}
-                else:
-                    output = connector.execute_command('show interfaces counters rates')
-                    telemetry['interface_rates'] = DeviceTelemetry.parse_interface_rates(output)
-            except Exception as e:
-                print(f"Error getting interface rates: {e}")
                 telemetry['interface_rates'] = {}
 
             telemetry['reachable'] = True

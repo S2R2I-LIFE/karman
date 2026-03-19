@@ -138,7 +138,7 @@ def _collect_all_telemetry(username, password):
     try:
         futures = {executor.submit(_collect_device_telemetry, d, username, password): d for d in devices}
         try:
-            for future in as_completed(futures, timeout=35):
+            for future in as_completed(futures, timeout=60):
                 try:
                     telemetry_data.append(future.result())
                 except Exception as e:
@@ -174,20 +174,42 @@ def _write_telemetry_cache(devices):
         app.logger.error(f"[Cache] Write error: {e}")
 
 def _background_telemetry_loop():
-    """Daemon thread: keeps telemetry cache warm. Only polls when cache is stale
-    so multiple gunicorn workers don't all hit devices simultaneously."""
-    time.sleep(15)  # Let app fully start before first poll
+    """Daemon thread: keeps telemetry cache warm. Only polls when cache is stale.
+
+    Uses a DB-level lock (app_settings row 'telemetry_lock_at') to prevent
+    multiple gunicorn workers from polling simultaneously.  The lock is valid
+    for 90 s — long enough to cover a full collection cycle.
+    """
+    # Stagger startup by pid so workers don't all race at exactly t=15s
+    time.sleep(15 + (os.getpid() % 10))
     while True:
         try:
-            # Check cache age — only poll if no worker updated in the last 28 s
+            now = time.time()
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
+
+            # Read cache age and lock timestamp in one connection
             cursor.execute("SELECT updated_at FROM telemetry_cache WHERE id=1")
             row = cursor.fetchone()
-            conn.close()
-            age = time.time() - row[0] if row else 999
+            cache_age = now - row[0] if row else 999
 
-            if age >= 28:
+            cursor.execute("SELECT value FROM app_settings WHERE key='telemetry_lock_at'")
+            lock_row = cursor.fetchone()
+            lock_age = now - float(lock_row[0]) if lock_row else 999
+
+            should_collect = cache_age >= 28 and lock_age >= 90
+
+            if should_collect:
+                # Claim the lock before releasing the connection
+                cursor.execute(
+                    "INSERT INTO app_settings(key, value) VALUES('telemetry_lock_at', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (str(now),)
+                )
+                conn.commit()
+            conn.close()
+
+            if should_collect:
                 username = os.environ.get('DEFAULT_DEVICE_USERNAME', 'admin')
                 password = os.environ.get('DEFAULT_DEVICE_PASSWORD', '')
                 result = _collect_all_telemetry(username, password)
@@ -2454,7 +2476,7 @@ def api_telemetry_devices():
     try:
         body = request.get_json(silent=True) or {}
         username = body.get('username') or os.environ.get('DEFAULT_DEVICE_USERNAME', 'admin')
-        password = body.get('password', os.environ.get('DEFAULT_DEVICE_PASSWORD', ''))
+        password = body.get('password') or os.environ.get('DEFAULT_DEVICE_PASSWORD', '')
 
         telemetry_data = _collect_all_telemetry(username, password)
 
@@ -2497,6 +2519,17 @@ def api_live_metrics(hostname):
             data = _live_metrics_ssh(connector, section)
             connector.disconnect()
 
+        elif mgmt == 'gnmi':
+            from connectors.gnmi_connector import GNMIConnector
+            port = int(device.gnmi_port) if device.gnmi_port else 6030
+            connector = GNMIConnector(ip, port=port, username=username, password=password, timeout=15)
+            if not connector.connect():
+                return jsonify({'error': 'gNMI connection failed'}), 503
+            try:
+                data = _live_metrics_gnmi(connector, section)
+            finally:
+                connector.disconnect()
+
         else:
             return jsonify({'success': True, 'section': section,
                             'data': None, 'unavailable': True,
@@ -2511,10 +2544,28 @@ def api_live_metrics(hostname):
 
 def _live_metrics_eapi(connector, section):
     """Collect one metrics section via eAPI JSON commands."""
+
+    def _result(res, idx=0):
+        """Unwrap the pyeapi response envelope to get the actual result dict.
+
+        pyeapi Node.enable() returns a list of dicts shaped:
+            {'command': '...', 'encoding': 'json', 'result': {actual data}}
+        Some commands (e.g. show lldp neighbors detail on older vEOS) return
+        text output — in that case result['result'] is a string, not a dict.
+        Always return a dict so callers can safely call .get() on the return value.
+        """
+        if not res or idx >= len(res):
+            return {}
+        item = res[idx]
+        if not isinstance(item, dict):
+            return {}
+        r = item.get('result', {})
+        return r if isinstance(r, dict) else {}
+
     if section == 'interfaces':
         res = connector.execute_commands(['show interfaces', 'show interfaces counters rates'])
-        intfs_raw  = (res[0] or {}).get('interfaces', {}) if res else {}
-        rates_raw  = (res[1] or {}).get('interfaces', {}) if res and len(res) > 1 else {}
+        intfs_raw = _result(res, 0).get('interfaces', {})
+        rates_raw = _result(res, 1).get('interfaces', {})
         rows = []
         for name, d in sorted(intfs_raw.items()):
             if name.startswith('Management'):
@@ -2527,8 +2578,8 @@ def _live_metrics_eapi(connector, section):
                 'line_proto':  d.get('lineProtocolStatus', ''),
                 'description': d.get('description', ''),
                 'bandwidth':   d.get('bandwidth', 0),
-                'in_errors':   ctr.get('inputErrorsDetail', {}).get('runtFrames', 0) + ctr.get('totalInErrors', ctr.get('inErrors', 0)),
-                'out_errors':  ctr.get('outputErrorsDetail', {}).get('collisions', 0) + ctr.get('totalOutErrors', ctr.get('outErrors', 0)),
+                'in_errors':   ctr.get('totalInErrors', ctr.get('inErrors', 0)),
+                'out_errors':  ctr.get('totalOutErrors', ctr.get('outErrors', 0)),
                 'in_octets':   ctr.get('inOctets', 0),
                 'out_octets':  ctr.get('outOctets', 0),
                 'in_bps':      rates.get('inBitsRate', 0),
@@ -2538,45 +2589,42 @@ def _live_metrics_eapi(connector, section):
 
     elif section == 'bgp':
         res = connector.execute_commands(['show ip bgp summary'])
-        vrfs_raw = (res[0] or {}).get('vrfs', {}) if res else {}
+        vrfs_raw = _result(res).get('vrfs', {})
         vrfs = {}
         for vrf_name, vrf in vrfs_raw.items():
             peers = []
             for peer_ip, p in vrf.get('peers', {}).items():
                 peers.append({
-                    'neighbor':  peer_ip,
-                    'asn':       p.get('asn', ''),
-                    'state':     p.get('peerState', ''),
+                    'neighbor':          peer_ip,
+                    'asn':               p.get('asn', ''),
+                    'state':             p.get('peerState', ''),
                     'prefixes_received': p.get('prefixReceived', 0),
-                    'uptime':    p.get('upDownTime', 0),
-                    'msg_rcvd':  p.get('msgReceived', 0),
-                    'msg_sent':  p.get('msgSent', 0),
+                    'uptime':            p.get('upDownTime', 0),
+                    'msg_rcvd':          p.get('msgReceived', 0),
+                    'msg_sent':          p.get('msgSent', 0),
                 })
-            vrfs[vrf_name] = {
-                'router_id': vrf.get('routerId', ''),
-                'peers': peers,
-            }
+            vrfs[vrf_name] = {'router_id': vrf.get('routerId', ''), 'peers': peers}
         return {'vrfs': vrfs}
 
     elif section == 'lldp':
         res = connector.execute_commands(['show lldp neighbors detail'])
-        neighbors_raw = (res[0] or {}).get('lldpNeighbors', []) if res else []
+        neighbors_raw = _result(res).get('lldpNeighbors', [])
         neighbors = []
         for n in neighbors_raw:
             caps = n.get('systemCapabilities', {})
             cap_str = ', '.join(k[:1].upper() for k, v in caps.items() if v)
             neighbors.append({
-                'local_port':   n.get('port', ''),
-                'neighbor':     n.get('neighborDevice', ''),
+                'local_port':    n.get('port', ''),
+                'neighbor':      n.get('neighborDevice', ''),
                 'neighbor_port': n.get('neighborPort', ''),
-                'description':  n.get('neighborPortDescription', ''),
-                'capabilities': cap_str,
+                'description':   n.get('neighborPortDescription', ''),
+                'capabilities':  cap_str,
             })
         return {'neighbors': neighbors}
 
     elif section == 'routing':
         res = connector.execute_commands(['show ip route summary'])
-        vrfs_raw = (res[0] or {}).get('vrfs', {}) if res else {}
+        vrfs_raw = _result(res).get('vrfs', {})
         vrfs = {}
         for vrf_name, vrf in vrfs_raw.items():
             protocols = {}
@@ -2592,7 +2640,7 @@ def _live_metrics_eapi(connector, section):
 
     elif section == 'environment':
         res = connector.execute_commands(['show system environment all'])
-        data = res[0] if res else {}
+        data = _result(res)
 
         temp_sensors = []
         for s in data.get('tempSensors', []):
@@ -2607,17 +2655,17 @@ def _live_metrics_eapi(connector, section):
         psus = []
         for slot, p in data.get('powerSupplies', {}).items():
             psus.append({
-                'slot':   slot,
-                'state':  p.get('state', ''),
-                'output_watts': round(p.get('outputPower', 0), 1),
-                'capacity_watts': p.get('capacity', 0),
+                'slot':             slot,
+                'state':            p.get('state', ''),
+                'output_watts':     round(p.get('outputPower', 0), 1),
+                'capacity_watts':   p.get('capacity', 0),
             })
 
         fans = []
         for slot, f in data.get('fans', {}).items():
             fans.append({
-                'slot':   slot,
-                'status': f.get('status', ''),
+                'slot':      slot,
+                'status':    f.get('status', ''),
                 'speed_pct': f.get('speed', 0),
             })
 
@@ -2693,6 +2741,135 @@ def _live_metrics_ssh(connector, section):
         out = connector.execute_command('show system environment all')
         return {'temperature': DeviceTelemetry.parse_temperature(out).get('sensors', []),
                 'power_supplies': [], 'fans': []}
+
+    return {}
+
+
+def _live_metrics_gnmi(connector, section):
+    """Collect one metrics section via gNMI eos_native paths."""
+
+    def _notifications(result):
+        """Yield (prefix_last_segment, {leaf: val}) for each notification."""
+        if not result:
+            return
+        for notif in result.get('notification', []):
+            prefix = notif.get('prefix', '')
+            entity = prefix.rstrip('/').split('/')[-1]
+            if not entity or entity.startswith('_'):
+                continue
+            updates = {u['path']: u['val'] for u in notif.get('update', [])}
+            yield entity, updates
+
+    if section == 'interfaces':
+        result = connector.get('eos_native:/Sysdb/interface/status/eth/phy/slice/1/intfStatus')
+        rows = []
+        for name, upd in _notifications(result):
+            if name == 'intfStatus':
+                continue
+            oper = upd.get('operStatus', '')
+            rows.append({
+                'name':        name,
+                'status':      'connected' if oper == 'intfOperUp' else 'notconnect',
+                'line_proto':  'up' if oper == 'intfOperUp' else 'down',
+                'description': upd.get('description', ''),
+                'bandwidth':   upd.get('bandwidth', 0),
+                'in_errors':   0,
+                'out_errors':  0,
+                'in_octets':   0,
+                'out_octets':  0,
+                'in_bps':      0,
+                'out_bps':     0,
+            })
+        rows.sort(key=lambda r: r['name'])
+        return {'interfaces': rows}
+
+    elif section == 'bgp':
+        result = connector.get('eos_native:/Sysdb/routing/bgp/export')
+        peers = []
+        for peer_ip, upd in _notifications(result):
+            # Skip non-peer entries (no peerState)
+            if 'peerState' not in upd:
+                continue
+            peers.append({
+                'neighbor':          peer_ip,
+                'asn':               upd.get('peerAs', ''),
+                'state':             upd.get('peerState', ''),
+                'prefixes_received': upd.get('prefixesReceived', 0),
+                'uptime':            upd.get('establishedTime', 0),
+                'msg_rcvd':          0,
+                'msg_sent':          0,
+            })
+        return {'vrfs': {'default': {'router_id': '', 'peers': peers}}}
+
+    elif section == 'lldp':
+        result = connector.get('eos_native:/Sysdb/l2discovery/lldp/status/local/port')
+        neighbors = []
+        for port_name, upd in _notifications(result):
+            neighbor = upd.get('systemName', upd.get('chassisId', ''))
+            neighbor_port = upd.get('portId', '')
+            if not neighbor and not neighbor_port:
+                continue
+            neighbors.append({
+                'local_port':    port_name,
+                'neighbor':      neighbor,
+                'neighbor_port': neighbor_port,
+                'description':   upd.get('portDescription', ''),
+                'capabilities':  '',
+            })
+        return {'neighbors': neighbors}
+
+    elif section == 'routing':
+        # Routing table not reliably available via eos_native on vEOS-lab
+        return {'vrfs': {}}
+
+    elif section == 'environment':
+        paths = [
+            'eos_native:/Sysdb/environment/temperature/sensor',
+            'eos_native:/Sysdb/cpu/utilization/cpuInfo/0/cpuUtilization',
+            'eos_native:/Sysdb/kernel/procfs/meminfo',
+        ]
+        result = connector.get_multi(paths)
+
+        # Temperature sensors
+        temp_sensors = []
+        for sensor_name, upd in _notifications(result):
+            if 'currentTemperature' not in upd and 'temperature' not in upd:
+                continue
+            current = upd.get('currentTemperature', upd.get('temperature', 0))
+            temp_sensors.append({
+                'name':     sensor_name,
+                'current':  current,
+                'warning':  upd.get('overheatThreshold', 75),
+                'critical': upd.get('criticalThreshold', 95),
+                'status':   'warning' if upd.get('inAlertState') else 'ok',
+            })
+
+        # CPU — expect a single notification with idle leaf
+        cpu_percent = None
+        mem_percent = None
+        for entity, upd in _notifications(result):
+            if 'idle' in upd:
+                idle = upd.get('idle', 0)
+                cpu_percent = round(100 - idle, 1)
+            if 'memTotal' in upd:
+                total = upd.get('memTotal', 0)
+                free  = upd.get('memFree', 0)
+                buff  = upd.get('buffers', 0)
+                cached = upd.get('cached', 0)
+                if total:
+                    used = total - free - buff - cached
+                    mem_percent = round(used / total * 100, 1)
+
+        out = {
+            'temperature':    temp_sensors,
+            'power_supplies': [],
+            'fans':           [],
+        }
+        if cpu_percent is not None:
+            out['cpu_percent'] = cpu_percent
+        if mem_percent is not None:
+            out['mem_percent'] = mem_percent
+        return out
 
     return {}
 

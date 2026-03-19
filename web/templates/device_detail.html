@@ -804,18 +804,20 @@ const DEVICE_HOSTNAME = '{{ device.hostname }}';
 const MGMT_TYPE       = '{{ device.management_type.value }}';
 const metricsLoaded   = {};  // section → true once loaded
 
+const SUPPORTED_MGMT = ['eapi', 'ssh', 'gnmi'];
+
 function initMetricsTab() {
-    if (MGMT_TYPE !== 'eapi' && MGMT_TYPE !== 'ssh') {
+    if (!SUPPORTED_MGMT.includes(MGMT_TYPE)) {
         document.getElementById('metrics-accordion').style.display = 'none';
         document.getElementById('metrics-unavailable').style.display = '';
         document.getElementById('metrics-unavailable-msg').textContent =
-            `Live metrics require eAPI or SSH management (this device uses ${MGMT_TYPE}).`;
+            `Live metrics require eAPI, SSH, or gNMI management (this device uses ${MGMT_TYPE}).`;
     }
 }
 
 function loadMetricSection(section, force = false) {
     if (metricsLoaded[section] && !force) return;
-    if (MGMT_TYPE !== 'eapi' && MGMT_TYPE !== 'ssh') return;
+    if (!SUPPORTED_MGMT.includes(MGMT_TYPE)) return;
 
     const body = document.getElementById(`mc-${section}-body`);
     body.innerHTML = '<div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm"></div> Loading…</div>';
@@ -950,6 +952,29 @@ function renderMetricSection(section, data) {
         badge.style.display = '';
 
         let html = '';
+
+        // CPU / Memory — gNMI devices expose these; eAPI does not
+        if (data.cpu_percent !== undefined || data.mem_percent !== undefined) {
+            html += `<h6 class="small text-muted mb-2"><i class="bi bi-cpu"></i> System Resources</h6>
+            <div class="mb-3">`;
+            if (data.cpu_percent !== undefined) {
+                const cpuCls = data.cpu_percent >= 90 ? 'danger' : data.cpu_percent >= 70 ? 'warning' : 'success';
+                html += `<div class="d-flex justify-content-between small mb-1">
+                    <span>CPU Utilization</span><span class="fw-semibold">${data.cpu_percent}%</span></div>
+                <div class="progress mb-2" style="height:8px;">
+                    <div class="progress-bar bg-${cpuCls}" style="width:${data.cpu_percent}%"></div>
+                </div>`;
+            }
+            if (data.mem_percent !== undefined) {
+                const memCls = data.mem_percent >= 90 ? 'danger' : data.mem_percent >= 75 ? 'warning' : 'success';
+                html += `<div class="d-flex justify-content-between small mb-1">
+                    <span>Memory Used</span><span class="fw-semibold">${data.mem_percent}%</span></div>
+                <div class="progress" style="height:8px;">
+                    <div class="progress-bar bg-${memCls}" style="width:${data.mem_percent}%"></div>
+                </div>`;
+            }
+            html += `</div>`;
+        }
 
         if (temps.length) {
             const trs = temps.map(s => {
