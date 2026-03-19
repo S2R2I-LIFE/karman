@@ -92,6 +92,12 @@
                     <button class="btn btn-sm btn-danger" onclick="deleteDevice()">
                         <i class="bi bi-trash"></i> Delete
                     </button>
+                    <button class="btn btn-sm {{ 'btn-secondary' if device.polling_enabled else 'btn-outline-secondary' }}"
+                            id="pollingToggleBtn" onclick="togglePolling()"
+                            title="{{ 'Disable telemetry polling' if device.polling_enabled else 'Enable telemetry polling' }}">
+                        <i class="bi {{ 'bi-pause-circle' if device.polling_enabled else 'bi-play-circle' }}"></i>
+                        {{ 'Polling ON' if device.polling_enabled else 'Polling OFF' }}
+                    </button>
                 </div>
             </div>
         </div>
@@ -520,6 +526,23 @@ function runComplianceCheck() {
 
 function assignConfiglet() { window.location.href = '/devices/{{ device.hostname }}/assign-configlet'; }
 function connectDevice()   { window.open('/devices/{{ device.hostname }}/connect', '_blank', 'width=1024,height=768'); }
+
+function togglePolling() {
+    const btn = document.getElementById('pollingToggleBtn');
+    fetch('/api/devices/{{ device.hostname }}/toggle-polling', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                const on = data.polling_enabled;
+                btn.className = 'btn btn-sm ' + (on ? 'btn-secondary' : 'btn-outline-secondary');
+                btn.title = on ? 'Disable telemetry polling' : 'Enable telemetry polling';
+                btn.innerHTML = `<i class="bi ${on ? 'bi-pause-circle' : 'bi-play-circle'}"></i> ${on ? 'Polling ON' : 'Polling OFF'}`;
+            } else {
+                alert('Error: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(err => alert('Error toggling polling: ' + err));
+}
 
 function testConnection() {
     const btn = event.target.closest('button');

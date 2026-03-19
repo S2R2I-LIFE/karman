@@ -42,6 +42,7 @@ class Device:
     tags: Dict[str, str] = field(default_factory=dict)
     cvp_managed: bool = False
     gnmi_port: int = 6030
+    polling_enabled: bool = True
 
     def to_dict(self):
         return {
@@ -57,7 +58,8 @@ class Device:
             'configlets': self.configlets,
             'tags': self.tags,
             'cvp_managed': self.cvp_managed,
-            'gnmi_port': self.gnmi_port
+            'gnmi_port': self.gnmi_port,
+            'polling_enabled': self.polling_enabled,
         }
 
 
@@ -93,6 +95,13 @@ class InventoryManager:
         # Migration: add gnmi_port to existing databases
         try:
             cursor.execute('ALTER TABLE devices ADD COLUMN gnmi_port INTEGER DEFAULT 6030')
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        # Migration: add polling_enabled to existing databases
+        try:
+            cursor.execute('ALTER TABLE devices ADD COLUMN polling_enabled BOOLEAN DEFAULT 1')
             conn.commit()
         except sqlite3.OperationalError:
             pass  # Column already exists
@@ -143,8 +152,8 @@ class InventoryManager:
         cursor.execute('''
             INSERT OR REPLACE INTO devices
             (hostname, ip_address, model, serial_number, eos_version,
-             management_type, role, site, container, cvp_managed, gnmi_port)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             management_type, role, site, container, cvp_managed, gnmi_port, polling_enabled)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             device.hostname,
             device.ip_address,
@@ -156,7 +165,8 @@ class InventoryManager:
             device.site,
             device.container,
             device.cvp_managed,
-            device.gnmi_port
+            device.gnmi_port,
+            device.polling_enabled,
         ))
 
         # Add configlets
@@ -187,7 +197,7 @@ class InventoryManager:
 
         cursor.execute('''
             SELECT hostname, ip_address, model, serial_number, eos_version,
-                   management_type, role, site, container, cvp_managed, gnmi_port
+                   management_type, role, site, container, cvp_managed, gnmi_port, polling_enabled
             FROM devices WHERE hostname = ?
         ''', (hostname,))
         row = cursor.fetchone()
@@ -223,6 +233,7 @@ class InventoryManager:
             container=row[8],
             cvp_managed=bool(row[9]),
             gnmi_port=int(row[10]) if row[10] is not None else 6030,
+            polling_enabled=bool(row[11]) if row[11] is not None else True,
             configlets=configlets,
             tags=tags
         )
@@ -341,7 +352,8 @@ class InventoryManager:
                     site = ?,
                     container = ?,
                     cvp_managed = ?,
-                    gnmi_port = ?
+                    gnmi_port = ?,
+                    polling_enabled = ?
                 WHERE hostname = ?
             ''', (
                 device.hostname,
@@ -355,6 +367,7 @@ class InventoryManager:
                 device.container,
                 device.cvp_managed,
                 device.gnmi_port,
+                device.polling_enabled,
                 hostname  # Original hostname for WHERE clause
             ))
 

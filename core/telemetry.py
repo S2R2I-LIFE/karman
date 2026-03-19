@@ -532,8 +532,12 @@ class DeviceTelemetry:
                     r = item.get('result', {})
                     return r if isinstance(r, dict) else {}
 
-                # Version info
+                # Version info — if result is empty, commands failed silently (e.g.
+                # HTTP timeout returned [] without raising).  Treat as unreachable.
                 d = _r(0)
+                if not d:
+                    telemetry['error'] = 'No response from device'
+                    return telemetry
                 telemetry['version_info'] = {
                     'version': d.get('version', ''),
                     'model':   d.get('modelName', ''),

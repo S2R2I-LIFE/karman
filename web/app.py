@@ -85,8 +85,12 @@ _ensure_telemetry_cache_table()
 
 def _collect_device_telemetry(device_info, username, password):
     """Collect telemetry from a single device. Called from thread pool."""
-    hostname, ip, mgmt_type, gnmi_port = device_info
+    hostname, ip, mgmt_type, gnmi_port, polling_enabled = device_info
     device_data = {'hostname': hostname, 'ip': ip, 'telemetry': {'reachable': False}}
+
+    if not polling_enabled:
+        device_data['telemetry']['error'] = 'Polling disabled'
+        return device_data
 
     if mgmt_type == 'ssh':
         try:
@@ -126,7 +130,7 @@ def _collect_all_telemetry(username, password):
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT hostname, ip_address, management_type, gnmi_port FROM devices")
+    cursor.execute("SELECT hostname, ip_address, management_type, gnmi_port, polling_enabled FROM devices")
     devices = cursor.fetchall()
     conn.close()
 
@@ -913,6 +917,20 @@ def delete_device(hostname):
         app.logger.error(f'Error deleting device {hostname}: {str(e)}')
         flash(f'Error deleting device {hostname}: {str(e)}', 'danger')
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/devices/<hostname>/toggle-polling', methods=['POST'])
+@login_required
+def toggle_device_polling(hostname):
+    """Enable or disable telemetry polling for a device."""
+    device = inventory_mgr.get_device(hostname)
+    if not device:
+        return jsonify({'error': 'Device not found'}), 404
+    device.polling_enabled = not device.polling_enabled
+    inventory_mgr.update_device(hostname, device)
+    state = 'enabled' if device.polling_enabled else 'disabled'
+    return jsonify({'success': True, 'polling_enabled': device.polling_enabled,
+                    'message': f'Polling {state} for {hostname}'})
+
 
 @app.route('/devices/<hostname>/sync', methods=['POST'])
 @login_required
