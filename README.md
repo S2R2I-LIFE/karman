@@ -252,32 +252,167 @@ GNMIC_USERNAME=admin GNMIC_PASSWORD=yourpassword \
 
 ## Device Prerequisites (EOS)
 
-### eAPI (HTTPS/HTTP)
+What you configure on the switch depends on which management type you select in Kármán. You can enable multiple protocols on the same device — Kármán will use whichever type is set in the inventory.
+
+---
+
+### Management interface / VRF (all types)
+
+Most Arista switches keep the management port in a dedicated `management` VRF. Make sure it is configured before enabling any of the APIs below:
+
+```
+vrf instance management
+
+interface Management0
+   vrf management
+   ip address 192.168.1.10/24
+
+ip route vrf management 0.0.0.0/0 192.168.1.1
+
+! Allow the switch to reach Kármán (and vice versa)
+```
+
+> If your switches use the **default VRF** for management (common in lab/vEOS-lab builds), omit the `vrf management` keywords from all configs below.
+
+---
+
+### eAPI — HTTP/HTTPS (recommended for most deployments)
+
+Kármán uses eAPI to collect telemetry (`show version`, `show interfaces status`, `show processes top once`, `show system environment temperature`) and to push configuration changes.
+
+**With management VRF:**
 ```
 management api http-commands
    protocol https
    no shutdown
    vrf management
 ```
-> Kármán automatically falls back from HTTPS to HTTP if the SSL handshake fails (common on vEOS-lab).
+
+**Without management VRF (default VRF / vEOS-lab):**
+```
+management api http-commands
+   protocol https
+   no shutdown
+```
+
+**HTTP only (no TLS — lab use only):**
+```
+management api http-commands
+   protocol http
+   no shutdown
+```
+
+> Kármán automatically falls back from HTTPS to HTTP if the TLS handshake fails or times out. This is normal on vEOS-lab which does not have a valid certificate.
+
+Verify eAPI is working from the switch CLI:
+```
+show management api http-commands
+```
+
+---
 
 ### SSH
+
+Used as a fallback when eAPI is unavailable, or when a device is explicitly set to SSH management type. Kármán uses Netmiko to parse `show` command text output.
+
 ```
-username admin privilege 15 secret yourpassword
+! Create a user with privilege 15
+username admin privilege 15 secret 0 yourpassword
+
+! Enable SSH on the management VRF
 management ssh
    idle-timeout 60
    no shutdown
    vrf management
 ```
 
-### gNMI / TerminAttr
+**Without management VRF:**
 ```
-# TerminAttr — specify VRF if management interface is in a VRF
-daemon TerminAttr
-   exec /usr/bin/TerminAttr -grpcaddr=mgmt/0.0.0.0:6030 -disableaaa
+management ssh
+   idle-timeout 60
    no shutdown
 ```
-> `management api gnmi` and TerminAttr **cannot share the same port**. Use one or the other.
+
+Verify:
+```
+show management ssh
+```
+
+---
+
+### gNMI / TerminAttr (for interface Metrics tab and streaming telemetry)
+
+gNMI is required for the **Metrics tab** — real-time interface graphs and link flap history. Kármán connects to port 6030 on each device.
+
+There are two ways to expose gNMI on an Arista switch:
+
+#### Option A — TerminAttr (recommended, works on vEOS-lab without CVP)
+
+TerminAttr is the Arista streaming agent. It exposes gNMI on port 6030 independently of CVP.
+
+**With management VRF:**
+```
+daemon TerminAttr
+   exec /usr/bin/TerminAttr \
+      -grpcaddr=mgmt/0.0.0.0:6030 \
+      -disableaaa
+   no shutdown
+```
+
+**Without management VRF / using default VRF (most lab setups):**
+```
+daemon TerminAttr
+   exec /usr/bin/TerminAttr \
+      -grpcaddr=default/0.0.0.0:6030 \
+      -disableaaa
+   no shutdown
+```
+
+> **VRF must be specified in `-grpcaddr`** — using `0.0.0.0:6030` without a VRF name will bind to the default VRF only and may not be reachable from the management VRF, or vice versa. Match the VRF to whichever VRF your management IP lives in.
+
+> **`-disableaaa`** skips AAA authentication on the gRPC port. Required on vEOS-lab where local AAA can interfere. Remove it in production if you want gNMI auth enforced.
+
+Verify TerminAttr is running:
+```
+show daemon TerminAttr
+```
+
+#### Option B — `management api gnmi` (EOS native, no TerminAttr needed)
+
+```
+management api gnmi
+   transport grpc default
+      vrf management
+   no shutdown
+```
+
+> **Do not run `management api gnmi` and TerminAttr on the same port (6030).** They will conflict. Use one or the other per device.
+
+Verify:
+```
+show management api gnmi
+```
+
+#### TLS note
+
+By default, vEOS-lab TerminAttr runs without TLS. Kármán's gNMI connector automatically detects this (SSL probe → falls back to plaintext). For production devices with TLS, no code changes are needed — Kármán will complete the TLS handshake normally.
+
+---
+
+### What data each protocol provides
+
+| Data | eAPI | SSH | gNMI |
+|------|------|-----|------|
+| EOS version / model | Yes | Yes | No (vEOS-lab) |
+| Interface up/down count | Yes | Yes | Yes |
+| CPU / memory | Yes | Yes | No (vEOS-lab) |
+| Temperature sensors | Yes | Yes | No (vEOS-lab) |
+| Interface Metrics graphs | No | No | **Yes** |
+| Link flap history | No | No | **Yes** |
+| LLDP topology | Yes | Yes | No |
+| Config push | Yes | Yes | No |
+
+> On production hardware with CVP, gNMI exposes version and temperature via OpenConfig paths. On vEOS-lab without CVP those paths return empty — Kármán uses `eos_native` paths for interface status which are always available.
 
 ---
 
