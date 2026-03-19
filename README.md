@@ -230,6 +230,7 @@ GNMIC_USERNAME=admin GNMIC_PASSWORD=yourpassword \
 | `SECRET_KEY` | `change-me-in-production` | Flask session secret — **change this** |
 | `FLASK_ENV` | `production` | `production` or `development` |
 | `DATABASE_PATH` | `/app/data/custom-cvp.db` | SQLite DB path |
+| `KARMAN_BASE_URL` | `http://localhost:5000` | Public URL used in email notification links — set to your server's IP or hostname |
 | `DEFAULT_DEVICE_USERNAME` | `admin` | Username for device connections |
 | `DEFAULT_DEVICE_PASSWORD` | _(empty)_ | Password for device connections |
 | `PROMETHEUS_URL` | `http://localhost:9091` | Prometheus base URL |

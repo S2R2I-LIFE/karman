@@ -22,6 +22,9 @@ class EmailConfig:
     SMTP_USE_TLS = os.environ.get('SMTP_USE_TLS', 'true').lower() == 'true'
     FROM_EMAIL = os.environ.get('FROM_EMAIL', 'noreply@custom-cvp.local')
     ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'admin@custom-cvp.local')
+    # Base URL used in email links — set to wherever Kármán is reachable from
+    # the recipient's browser (e.g. http://192.168.1.10:5000 or https://karman.example.com)
+    BASE_URL = os.environ.get('KARMAN_BASE_URL', 'http://localhost:5000').rstrip('/')
 
 
 class EmailSender:
@@ -68,7 +71,12 @@ class EmailSender:
             'smtp_password':self.get_setting('smtp_password',       self.config.SMTP_PASSWORD),
             'smtp_use_tls': self.get_setting('smtp_use_tls',        str(self.config.SMTP_USE_TLS).lower()),
             'from_email':   self.get_setting('from_email',          self.config.FROM_EMAIL),
+            'base_url':     self.get_setting('base_url',            self.config.BASE_URL),
         }
+
+    def _base_url(self) -> str:
+        """Return the configured base URL for email links, with no trailing slash."""
+        return self.get_setting('base_url', self.config.BASE_URL).rstrip('/')
 
     @property
     def enabled(self):
@@ -222,7 +230,7 @@ class EmailSender:
                     <p>Please review and approve/reject this request in the Kármán dashboard.</p>
 
                     <p style="text-align: center;">
-                        <a href="http://localhost:5000/admin/access-requests" class="button">
+                        <a href="{self._base_url()}/admin/access-requests" class="button">
                             Review Request
                         </a>
                     </p>
@@ -285,7 +293,7 @@ class EmailSender:
                     <p>You can now log in to Kármán and start managing your Arista devices.</p>
 
                     <p style="text-align: center;">
-                        <a href="http://localhost:5000/login" class="button">
+                        <a href="{self._base_url()}/login" class="button">
                             Log In Now
                         </a>
                     </p>

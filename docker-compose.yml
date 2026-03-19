@@ -49,6 +49,10 @@ services:
       # Monitoring
       - PROMETHEUS_URL=${PROMETHEUS_URL:-http://localhost:9091}
 
+      # Base URL for email notification links — set to wherever Kármán is reachable
+      # from a browser (e.g. http://192.168.1.10:5000 or https://karman.example.com)
+      - KARMAN_BASE_URL=${KARMAN_BASE_URL:-http://localhost:5000}
+
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
