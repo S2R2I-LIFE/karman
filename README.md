@@ -1,484 +1,345 @@
-# Kármán - Arista Device Orchestration Platform
+# Kármán — Self-Hosted Arista Network Management Platform
 
-A comprehensive in-house solution for managing Arista network devices, designed to complement CloudVision Portal (CVP) for networks where budget constraints limit full CVP deployment.
+Kármán is a self-hosted alternative to Arista CloudVision Portal (CVP). It provides a web-based dashboard for managing Arista EOS devices via eAPI, SSH, and gNMI — without requiring a CVP license.
 
-## Overview
+**Features at a glance:**
+- Live device telemetry dashboard (interfaces, CPU, memory, temperature)
+- Configlet management with SHA256 versioning and change history
+- Change control (tasks) with approval workflow and rollback
+- Per-device Metrics tab with Prometheus-backed interface graphs
+- LLDP topology discovery
+- CLI browser and MIB browser
+- In-app notifications + email alerts
+- User management with role-based access (admin / standard)
 
-This platform addresses the challenge of managing large-scale Arista deployments (1000+ devices) where only a subset (40 devices) have full CVP support. It provides:
+---
 
-- **Unified Management**: Single interface for both CVP-managed and non-CVP-managed devices
-- **Configuration Management**: Template-based configlet generation using Jinja2
-- **CVP Integration**: Import and use existing CVP configlets (25 production-ready configs included)
-- **Change Control**: Task-based workflow with approval and rollback capabilities
-- **Inventory Management**: Device inventory with tagging and filtering
-- **Multi-Protocol Support**: eAPI, SSH, CVP API, and gNMI connectivity
-- **Version Control**: Configuration history and change tracking
-- **Validation**: Pre-deployment validation of configurations
+## Requirements
 
-## Architecture
+| Component | Minimum |
+|-----------|---------|
+| OS | Linux (Ubuntu 22.04+ recommended) |
+| CPU | 2 cores |
+| RAM | 2 GB |
+| Disk | 10 GB |
+| Python | 3.11+ (bare-metal only) |
+| Docker | 24+ with Compose v2 (Docker install only) |
 
-```
-custom-cvp/
-├── core/                      # Core functionality
-│   ├── inventory.py           # Device inventory management
-│   ├── configlet.py           # Configlet management with versioning
-│   └── task.py                # Task/change control management
-├── connectors/                # Device connectivity
-│   ├── eapi_connector.py      # Arista eAPI (pyeapi)
-│   ├── cvp_connector.py       # CVP API integration
-│   ├── netmiko_connector.py   # SSH fallback
-│   └── gnmi_connector.py      # gNMI/gRPC support
-├── templates/                 # Jinja2 configuration templates
-│   ├── base/                  # Base system configs
-│   ├── layer2/                # L2 features (VLANs, MLAG, etc.)
-│   ├── layer3/                # L3 features (BGP, OSPF, etc.)
-│   └── overlays/              # Overlay configs (VXLAN, EVPN)
-├── variables/                 # Device and global variables
-│   ├── device-vars/           # Per-device YAML files
-│   └── global-vars/           # Shared variables
-├── cli/                       # Command-line interface
-│   └── orchestrator_cli.py    # Main CLI tool
-├── builder.py                 # Configuration builder
-├── validator.py               # Configuration validator
-└── config/                    # Platform configuration
-    ├── devices.yaml           # Device inventory
-    └── settings.yaml          # Platform settings
-```
+Network reachability to managed devices on:
+- **eAPI**: TCP 443 (HTTPS) or 80 (HTTP)
+- **SSH**: TCP 22
+- **gNMI/TerminAttr**: TCP 6030
 
-## Installation
+---
 
-### Prerequisites
+## Option 1 — Docker (recommended)
 
-- Python 3.8 or higher
-- Access to Arista devices (eAPI enabled or SSH)
-- Optional: CVP access for CVP-managed devices
+### 1. Clone the repository
 
-### Setup
-
-1. Clone or extract the platform:
 ```bash
-cd custom-cvp
+git clone <repo-url> kárman
+cd kárman
 ```
 
-2. Install dependencies:
+### 2. Configure environment
+
 ```bash
+cp .env.example .env   # if .env.example exists, otherwise edit .env directly
+```
+
+Edit `.env` — at minimum set:
+
+```ini
+# Generate with: python3 -c "import secrets; print(secrets.token_hex(32))"
+SECRET_KEY=replace-with-a-random-64-char-hex-string
+
+# Credentials Kármán uses to connect to your Arista devices
+DEFAULT_DEVICE_USERNAME=admin
+DEFAULT_DEVICE_PASSWORD=yourpassword
+
+# Port Kármán listens on (host port, container always binds 5000)
+# Change if something else is already on 5000
+BIND_ADDRESS=0.0.0.0:5000
+```
+
+All other defaults are fine for a lab environment.
+
+### 3. Build and start
+
+```bash
+docker compose up -d --build
+```
+
+This starts four services:
+| Container | Role | Port |
+|-----------|------|------|
+| `custom-cvp-docker` | Flask web app | 5000 |
+| `karman-gnmic` | gNMI dial-in collector | — |
+| `karman-gnmic-listener` | gNMI dial-out receiver | 9910 |
+| `karman-prometheus` | Time-series DB | 9091 |
+
+### 4. Open the UI
+
+Navigate to `http://<server-ip>:5000`
+
+The first user to register is automatically granted admin access — no approval needed.
+
+### 5. Useful commands
+
+```bash
+# View logs
+docker logs custom-cvp-docker -f
+
+# Restart after code changes (volumes are live-mounted — no rebuild needed)
+docker compose restart custom-cvp
+
+# Full rebuild (after requirements.txt or Dockerfile changes)
+docker compose up -d --build
+
+# Stop everything
+docker compose down
+
+# Stop and remove all data (destructive)
+docker compose down -v
+```
+
+---
+
+## Option 2 — Bare Metal / Virtual Machine
+
+### 1. Install Python 3.11
+
+```bash
+# Ubuntu / Debian
+sudo apt update && sudo apt install -y python3.11 python3.11-venv python3-pip git curl
+```
+
+### 2. Clone and create virtualenv
+
+```bash
+git clone <repo-url> /opt/karman
+cd /opt/karman
+python3.11 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-3. Initialize the database:
-```bash
-python cli/orchestrator_cli.py inventory list
-```
-
-## Quick Start
-
-### 1. Import Device Inventory
+### 3. Configure environment
 
 ```bash
-python cli/orchestrator_cli.py inventory import config/devices.yaml
+cp .env .env.local   # keep original as reference
 ```
 
-### 1b. Explore Imported CVP Configlets (Optional)
+Edit `.env` (the app reads this file directly):
 
-The platform includes 25 production-ready configlets imported from Arista CVP:
+```ini
+SECRET_KEY=replace-with-random-hex
+FLASK_ENV=production
+DATABASE_PATH=/opt/karman/data/custom-cvp.db
+DEFAULT_DEVICE_USERNAME=admin
+DEFAULT_DEVICE_PASSWORD=yourpassword
+PROMETHEUS_URL=http://localhost:9091
+```
+
+### 4. Create required directories
 
 ```bash
-# List all imported configlets
-python cli/orchestrator_cli.py configlet list
-
-# View a specific configlet
-python cli/orchestrator_cli.py configlet show Day2Ops-Leaf1-start
-
-# See CVP_CONFIGLETS.md for detailed documentation
+mkdir -p /opt/karman/data /opt/karman/logs /opt/karman/output
 ```
 
-### 2. Create a Device Variable File
-
-Create a YAML file in `variables/device-vars/`:
-
-```yaml
-hostname: leaf1-dc1
-domain_name: datacenter.local
-
-dns_servers:
-  - ip: 8.8.8.8
-    vrf: management
-
-vlans:
-  - id: 10
-    name: VLAN10
-
-interfaces:
-  - name: Ethernet3
-    description: "Server Port"
-    mode: access
-    vlan: 10
-```
-
-### 3. Build Configuration
+### 5. Run with gunicorn
 
 ```bash
-python builder.py \
-  --device leaf1.yaml \
-  --templates base/system.j2 layer2/vlans.j2 base/interfaces.j2 \
-  --output leaf1.cfg
+source /opt/karman/.venv/bin/activate
+gunicorn \
+  --bind 0.0.0.0:5000 \
+  --workers 4 \
+  --timeout 120 \
+  --access-logfile /opt/karman/logs/access.log \
+  --error-logfile /opt/karman/logs/error.log \
+  web.app:app
 ```
 
-### 4. Validate Configuration
+### 6. (Optional) systemd service
+
+```ini
+# /etc/systemd/system/karman.service
+[Unit]
+Description=Kármán Network Management Platform
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/karman
+EnvironmentFile=/opt/karman/.env
+ExecStart=/opt/karman/.venv/bin/gunicorn \
+  --bind 0.0.0.0:5000 \
+  --workers 4 \
+  --timeout 120 \
+  --access-logfile /opt/karman/logs/access.log \
+  --error-logfile /opt/karman/logs/error.log \
+  web.app:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
 
 ```bash
-python validator.py --config output/generated-configs/leaf1.cfg
+sudo systemctl daemon-reload
+sudo systemctl enable --now karman
+sudo systemctl status karman
 ```
 
-### 5. Deploy to Device
+### 7. Monitoring stack (bare metal)
 
-Using eAPI connector:
-```python
-from connectors.eapi_connector import EAPIConnector
+For the Metrics tab and interface history graphs, you also need **gnmic** and **Prometheus**.
 
-conn = EAPIConnector('192.168.1.11', 'admin', 'password')
-conn.connect()
-conn.apply_config(['interface Ethernet3', 'description Updated'])
-conn.save_config()
-```
-
-## CLI Usage
-
-### Inventory Management
-
+**Prometheus:**
 ```bash
-# List all devices
-python cli/orchestrator_cli.py inventory list
+# Download from https://github.com/prometheus/prometheus/releases
+wget https://github.com/prometheus/prometheus/releases/download/v3.2.1/prometheus-3.2.1.linux-amd64.tar.gz
+tar xzf prometheus-3.2.1.linux-amd64.tar.gz
+sudo mv prometheus-3.2.1.linux-amd64/prometheus /usr/local/bin/
 
-# Add a device
-python cli/orchestrator_cli.py inventory add \
-  --hostname leaf3 \
-  --ip 192.168.1.13 \
-  --role leaf \
-  --site datacenter1 \
-  --mgmt-type eapi
-
-# Import from YAML
-python cli/orchestrator_cli.py inventory import config/devices.yaml
-
-# Export to YAML
-python cli/orchestrator_cli.py inventory export backup.yaml
+# Use the config from this repo
+prometheus \
+  --config.file=/opt/karman/monitoring/prometheus/prometheus.yml \
+  --web.listen-address=:9091 \
+  --storage.tsdb.retention.time=30d &
 ```
 
-### Configlet Management
-
+**gnmic:**
 ```bash
-# List configlets
-python cli/orchestrator_cli.py configlet list
+# Download from https://github.com/openconfig/gnmic/releases
+curl -sL https://github.com/openconfig/gnmic/releases/latest/download/gnmic_linux_x86_64 \
+  -o /usr/local/bin/gnmic && chmod +x /usr/local/bin/gnmic
 
-# Create configlet
-python cli/orchestrator_cli.py configlet create \
-  --name BASE_CONFIG \
-  --file /path/to/config.txt \
-  --description "Base configuration"
-
-# Show configlet
-python cli/orchestrator_cli.py configlet show BASE_CONFIG
-
-# View history
-python cli/orchestrator_cli.py configlet history BASE_CONFIG
+GNMIC_USERNAME=admin GNMIC_PASSWORD=yourpassword \
+  gnmic subscribe --config /opt/karman/monitoring/gnmic/gnmic.yml &
 ```
 
-### Build Configurations
+---
 
-```bash
-# Single device
-python cli/orchestrator_cli.py build \
-  --device leaf1.yaml \
-  --templates base/system.j2 layer2/mlag.j2
+## Environment Variables Reference
 
-# Bulk build
-python cli/orchestrator_cli.py build \
-  --bulk device-list.yaml \
-  --templates base/system.j2 layer2/vlans.j2
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SECRET_KEY` | `change-me-in-production` | Flask session secret — **change this** |
+| `FLASK_ENV` | `production` | `production` or `development` |
+| `DATABASE_PATH` | `/app/data/custom-cvp.db` | SQLite DB path |
+| `DEFAULT_DEVICE_USERNAME` | `admin` | Username for device connections |
+| `DEFAULT_DEVICE_PASSWORD` | _(empty)_ | Password for device connections |
+| `PROMETHEUS_URL` | `http://localhost:9091` | Prometheus base URL |
+| `PROMETHEUS_PORT` | `9091` | Prometheus listen port |
+| `TELEGRAF_METRICS_PORT` | `9273` | gnmic Prometheus metrics port |
+| `GNMIC_INGEST_METRICS_PORT` | `9274` | gnmic-listener metrics port |
+| `LOG_LEVEL` | `INFO` | Logging level |
 
-### Task Management
+---
 
-```bash
-# List tasks
-python cli/orchestrator_cli.py task list
+## First Time Setup
 
-# Show task details
-python cli/orchestrator_cli.py task show 1
+1. Open `http://<server>:5000` and register — you become admin automatically.
+2. Go to **Devices → Add Device** and enter your device's hostname, IP, and management type.
+   - Kármán auto-detects the management type by probing TCP ports 443, 22, and 6030.
+3. The dashboard begins polling immediately. Telemetry refreshes every ~30 seconds.
+4. To configure email alerts: **Admin → Settings → Email**.
 
-# Create task
-python cli/orchestrator_cli.py task create \
-  --type config_change \
-  --devices "leaf1,leaf2" \
-  --description "Update VLANs"
-```
+---
 
-## Template Development
+## Device Prerequisites (EOS)
 
-### Template Structure
-
-Templates use Jinja2 syntax with EOS-specific formatting:
-
-```jinja
-!
-! VLAN Configuration
-!
-{% for vlan in vlans %}
-vlan {{ vlan.id }}
-   name {{ vlan.name }}
-!
-{% endfor %}
-```
-
-### Variable Hierarchy
-
-1. **Global Variables** (`variables/global-vars/global-vars.yaml`): Shared across all devices
-2. **Device Variables** (`variables/device-vars/<device>.yaml`): Device-specific settings
-3. **Template Defaults**: Fallback values in templates
-
-### Creating New Templates
-
-1. Create template file in appropriate directory:
-```bash
-touch templates/layer3/static-routes.j2
-```
-
-2. Add Jinja2 template content:
-```jinja
-{% if static_routes %}
-{% for route in static_routes %}
-ip route {{ route.destination }} {{ route.next_hop }}
-{% endfor %}
-{% endif %}
-```
-
-3. Use in builds:
-```bash
-python builder.py --device leaf1.yaml --templates layer3/static-routes.j2
-```
-
-## Device Connectivity
-
-### eAPI (Recommended)
-
-Enable eAPI on Arista devices:
+### eAPI (HTTPS/HTTP)
 ```
 management api http-commands
    protocol https
    no shutdown
    vrf management
 ```
+> Kármán automatically falls back from HTTPS to HTTP if the SSL handshake fails (common on vEOS-lab).
 
-Python usage:
-```python
-from connectors.eapi_connector import EAPIConnector
-
-conn = EAPIConnector('192.168.1.11', 'admin', 'password')
-conn.connect()
-result = conn.execute_commands(['show version'])
+### SSH
+```
+username admin privilege 15 secret yourpassword
+management ssh
+   idle-timeout 60
+   no shutdown
+   vrf management
 ```
 
-### CVP Integration
-
-For CVP-managed devices:
-```python
-from connectors.cvp_connector import CVPConnector
-
-cvp = CVPConnector('cvp.example.com', 'admin', 'password')
-cvp.connect()
-devices = cvp.get_devices()
+### gNMI / TerminAttr
 ```
-
-### SSH Fallback
-
-When eAPI is unavailable:
-```python
-from connectors.netmiko_connector import NetmikoConnector
-
-conn = NetmikoConnector('192.168.1.11', 'admin', 'password')
-conn.connect()
-output = conn.get_running_config()
+# TerminAttr — specify VRF if management interface is in a VRF
+daemon TerminAttr
+   exec /usr/bin/TerminAttr -grpcaddr=mgmt/0.0.0.0:6030 -disableaaa
+   no shutdown
 ```
-
-## Configuration Validation
-
-### Variable Validation
-
-Define schema in `schemas/device-schema.json`:
-```json
-{
-  "type": "object",
-  "required": ["hostname"],
-  "properties": {
-    "hostname": {
-      "type": "string",
-      "pattern": "^[a-zA-Z0-9-]+$"
-    }
-  }
-}
-```
-
-Validate:
-```bash
-python validator.py --vars variables/device-vars/leaf1.yaml
-```
-
-### Syntax Validation
-
-```bash
-python validator.py --config output/generated-configs/leaf1.cfg
-```
-
-## Best Practices
-
-### 1. Configuration Sessions
-
-Always use configuration sessions for complex changes:
-```python
-conn.apply_config(commands, session='CHANGE-12345')
-# Review changes
-# Commit or abort
-```
-
-### 2. Checkpoints
-
-Create checkpoints before major changes:
-```python
-conn.create_checkpoint('pre-upgrade-backup')
-```
-
-### 3. Version Control
-
-Store templates and variables in Git:
-```bash
-git add templates/ variables/
-git commit -m "Add MLAG configuration template"
-```
-
-### 4. Testing
-
-Test configurations in lab environment before production deployment.
-
-### 5. Change Control
-
-Use the task system for all production changes:
-```python
-task_id = tasks.create_task(
-    TaskType.CONFIG_CHANGE,
-    ['leaf1', 'leaf2'],
-    "Update BGP configuration",
-    config_changes
-)
-```
-
-## Hybrid CVP Environment
-
-### Managing Mixed Deployment
-
-For 40 CVP-managed devices and 960 custom-managed devices:
-
-1. **Inventory Tracking**: Tag devices with `cvp_managed: true/false`
-2. **Unified Templates**: Same templates for both groups
-3. **Selective Deployment**:
-   - CVP devices: Push via CVP API
-   - Custom devices: Direct eAPI/SSH
-
-Example workflow:
-```python
-devices = inventory.get_devices_by_filter(cvp_managed=False)
-for device in devices:
-    # Deploy via eAPI
-    conn = EAPIConnector(device.ip_address, user, pass)
-    conn.apply_config(config_lines)
-
-cvp_devices = inventory.get_devices_by_filter(cvp_managed=True)
-for device in cvp_devices:
-    # Deploy via CVP
-    cvp.apply_configlet_to_device(device.hostname, configlet_name)
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Database locked**: Close other CLI instances
-2. **eAPI connection fails**: Verify eAPI is enabled and credentials are correct
-3. **Template errors**: Check variable names match between YAML and templates
-4. **Permission denied**: Ensure user has appropriate privileges on devices
-
-### Debug Mode
-
-Enable verbose logging:
-```python
-import logging
-logging.basicConfig(level=logging.DEBUG)
-```
-
-## Advanced Features
-
-### Bulk Operations
-
-Create device list file:
-```yaml
-devices:
-  - variable_file: leaf1.yaml
-    output_file: leaf1.cfg
-  - variable_file: leaf2.yaml
-    output_file: leaf2.cfg
-```
-
-Execute:
-```bash
-python builder.py --bulk device-list.yaml --templates base/system.j2
-```
-
-### Custom Filters
-
-Add custom Jinja2 filters in `builder.py`:
-```python
-def ip_increment(ip_address, offset):
-    # Custom logic
-    return new_ip
-
-env.filters['ip_increment'] = ip_increment
-```
-
-### API Integration
-
-Extend with REST API using Flask or FastAPI (see `web/` directory for future implementation).
-
-## Contributing
-
-To extend the platform:
-
-1. Add new connectors in `connectors/`
-2. Create new templates in `templates/`
-3. Extend core modules in `core/`
-4. Add CLI commands in `cli/orchestrator_cli.py`
-
-## Support
-
-For issues related to:
-- Arista EOS: Refer to Arista documentation
-- Python dependencies: Check requirements.txt versions
-- Platform bugs: Review code and logs
-
-## License
-
-Internal use - customize as needed for your organization.
-
-## Roadmap
-
-Future enhancements:
-- [ ] Web-based UI
-- [ ] Real-time telemetry integration
-- [ ] Automated compliance checking
-- [ ] Integration with network monitoring tools
-- [ ] Multi-site synchronization
-- [ ] Role-based access control (RBAC)
-- [ ] Workflow automation engine
+> `management api gnmi` and TerminAttr **cannot share the same port**. Use one or the other.
 
 ---
 
-Built for network engineers managing large-scale Arista deployments with budget constraints.
+## Architecture
+
+```
+Browser
+  │
+  ▼
+Flask (web/app.py)  ─── SQLite (custom-cvp.db)
+  │
+  ├── eAPI connector    → Arista EOS port 443/80
+  ├── SSH connector     → Arista EOS port 22
+  ├── gNMI connector    → Arista EOS port 6030
+  │
+  └── Prometheus API ─── Prometheus ─── gnmic ─── Arista EOS gNMI
+```
+
+**Background telemetry** runs every ~30 seconds in a daemon thread, caching device status in SQLite. A DB-level lock prevents concurrent polls across gunicorn workers.
+
+**Monitoring stack** (optional but needed for Metrics tab graphs):
+- `gnmic` — dials out to devices on port 6030, exposes interface metrics on port 9273
+- `gnmic-listener` — receives dial-out streams from TerminAttr on port 9910
+- `Prometheus` — scrapes gnmic on port 9273/9274, retains 30 days of data
+
+---
+
+## Upgrading
+
+```bash
+git pull
+docker compose up -d --build   # Docker
+# or
+pip install -r requirements.txt && sudo systemctl restart karman   # bare metal
+```
+
+Database migrations run automatically on startup — no manual schema changes needed.
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| Device shows DOWN | No route, wrong credentials, or eAPI disabled | Check device eAPI config; verify IP reachability |
+| `Collection timeout` | Too many devices / slow network | Increase `as_completed` timeout in `web/app.py` |
+| Metrics tab shows no data | gnmic not running or wrong target IPs | Check `docker logs karman-gnmic` |
+| 500 error on LLDP | Command returns text instead of JSON | Already handled — update to latest code |
+| SSL handshake timeout | vEOS-lab HTTPS is slow | Automatic HTTP fallback handles this |
+
+```bash
+# Check all service logs
+docker compose logs -f
+
+# Check specific service
+docker logs karman-gnmic -f
+
+# Manually test device connectivity from inside container
+docker exec custom-cvp-docker python3 -c "
+import pyeapi
+from pyeapi.client import Node
+conn = pyeapi.connect(transport='http', host='10.0.0.1', username='admin', password='pass', port=80, timeout=10)
+print(Node(conn).enable(['show version'])[0]['result']['modelName'])
+"
+```
