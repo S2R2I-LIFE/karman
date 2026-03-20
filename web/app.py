@@ -29,6 +29,7 @@ from core.mib_browser import MIBBrowserManager
 from core.cli_navigator import CLINavigator
 from core.user import UserManager
 from core.notification import NotificationManager
+from core.agent_manager import AgentManager
 from builder import ConfigletBuilder
 from validator import ConfigValidator
 from web.email_sender import EmailSender
@@ -59,6 +60,7 @@ cli_navigator = CLINavigator(DB_PATH)
 user_mgr = UserManager(DB_PATH)
 notification_mgr = NotificationManager(DB_PATH)
 email_sender = EmailSender(DB_PATH)
+agent_mgr = AgentManager(DB_PATH)
 builder = ConfigletBuilder()
 validator = ConfigValidator()
 
@@ -285,6 +287,7 @@ def inject_globals():
         'app_name': 'Kármán',
         'app_version': '1.0.0',
         'current_user': session.get('username', 'Guest'),
+        'is_admin': session.get('is_admin', False),
         'pending_request_count': pending_count
     }
 
@@ -3338,6 +3341,230 @@ def api_device_group(group_id):
     except sqlite3.IntegrityError:
         conn.close()
         return jsonify({'success': False, 'error': 'Group name already exists'}), 409
+
+
+# ==================== Karman-Link Agent API ====================
+#
+# The agent (karman-link) runs on an engineer's laptop and polls these
+# endpoints to receive commands and post results.  No WebSocket needed —
+# plain HTTP polling keeps this compatible with standard gunicorn workers.
+#
+# Flow:
+#   1. Agent POSTs /api/agent/connect  → gets session_id
+#   2. Agent discovers switch, POSTs /api/agent/sessions/<id>/status
+#   3. UI calls /api/agent/sessions/<id>/ingest  → queues commands in DB
+#   4. Agent GETs /api/agent/sessions/<id>/next-command every ~3s
+#   5. Agent executes, POSTs /api/agent/sessions/<id>/result
+#   6. UI polls /api/agent/sessions/<id>/progress for live status
+
+@app.route('/api/agent/connect', methods=['POST'])
+def agent_connect():
+    """Agent registers with Karman and receives a session ID."""
+    data = request.get_json() or {}
+    raw_key = data.get('api_key', '')
+    if not raw_key:
+        return jsonify({'error': 'api_key required'}), 401
+
+    key_record = agent_mgr.validate_key(raw_key)
+    if not key_record:
+        return jsonify({'error': 'Invalid or expired API key'}), 401
+
+    session_id = agent_mgr.create_session(
+        key_record['key_id'],
+        engineer=key_record.get('label') or key_record['key_id']
+    )
+    app.logger.info(f"[Agent] New session {session_id[:8]} from key '{key_record.get('label')}'")
+    return jsonify({'session_id': session_id, 'heartbeat_interval': 15})
+
+
+@app.route('/api/agent/sessions/<session_id>/status', methods=['POST'])
+def agent_update_status(session_id):
+    """Agent reports discovered switch details or a status change."""
+    if not agent_mgr.get_session(session_id):
+        return jsonify({'error': 'Session not found'}), 404
+
+    data = request.get_json() or {}
+    allowed = ('switch_ip', 'switch_hostname', 'switch_model',
+               'switch_serial', 'switch_eos', 'status')
+    updates = {k: v for k, v in data.items() if k in allowed}
+    if updates:
+        agent_mgr.update_session(session_id, **updates)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/agent/sessions/<session_id>/heartbeat', methods=['POST'])
+def agent_heartbeat(session_id):
+    """Agent keepalive — called every heartbeat_interval seconds."""
+    agent_mgr.update_session(session_id, last_heartbeat=time.time())
+    return jsonify({'ok': True})
+
+
+@app.route('/api/agent/sessions/<session_id>/next-command', methods=['GET'])
+def agent_next_command(session_id):
+    """Return the next pending command for this session, or {action: wait}."""
+    if not agent_mgr.get_session(session_id):
+        return jsonify({'error': 'Session not found'}), 404
+
+    agent_mgr.update_session(session_id, last_heartbeat=time.time())
+    cmd = agent_mgr.claim_next_command(session_id)
+    if cmd:
+        import json as _json
+        return jsonify({
+            'command_id': cmd['command_id'],
+            'action':     cmd['action'],
+            'payload':    _json.loads(cmd['payload']) if cmd['payload'] else {},
+        })
+    return jsonify({'action': 'wait'})
+
+
+@app.route('/api/agent/sessions/<session_id>/result', methods=['POST'])
+def agent_command_result(session_id):
+    """Agent submits the result of an executed command."""
+    data = request.get_json() or {}
+    command_id = data.get('command_id')
+    if not command_id:
+        return jsonify({'error': 'command_id required'}), 400
+
+    success = data.get('success', False)
+    result  = data.get('result', [])
+    error   = data.get('error', '')
+
+    agent_mgr.complete_command(command_id, success, {'data': result, 'error': error})
+
+    # Update session metadata from show version result
+    if success and result:
+        _agent_process_result(session_id, command_id, result)
+
+    return jsonify({'ok': True})
+
+
+@app.route('/api/agent/sessions/<session_id>/disconnect', methods=['POST'])
+def agent_disconnect(session_id):
+    """Agent signals a clean shutdown."""
+    agent_mgr.update_session(
+        session_id, status='disconnected', disconnected_at=time.time()
+    )
+    return jsonify({'ok': True})
+
+
+def _agent_process_result(session_id: str, command_id: str, result: list):
+    """Parse ingest results and backfill session metadata."""
+    cmd = agent_mgr.get_command(command_id)
+    if not cmd or not cmd.get('payload'):
+        return
+    import json as _json
+    payload  = _json.loads(cmd['payload'])
+    commands = payload.get('commands', [])
+    if not commands or not result:
+        return
+
+    first_cmd = commands[0].lower()
+
+    if 'show version' in first_cmd and isinstance(result, list) and result:
+        rv = result[0].get('result', {}) if isinstance(result[0], dict) else {}
+        if isinstance(rv, dict):
+            agent_mgr.update_session(
+                session_id,
+                switch_hostname=rv.get('hostname', ''),
+                switch_model=rv.get('modelName', ''),
+                switch_serial=rv.get('serialNumber', ''),
+                switch_eos=rv.get('version', ''),
+            )
+
+
+# ── UI pages ──────────────────────────────────────────────────────────────────
+
+@app.route('/ingest')
+@login_required
+def ingest():
+    return render_template('ingest.html')
+
+
+@app.route('/admin/agent-keys')
+@admin_required
+def admin_agent_keys():
+    return render_template('admin/agent_keys.html')
+
+
+# ── UI → Agent control ────────────────────────────────────────────────────────
+
+@app.route('/api/agent/sessions', methods=['GET'])
+@login_required
+def agent_list_sessions():
+    """Return active (or all recent) agent sessions."""
+    active_only = request.args.get('active', 'true').lower() == 'true'
+    return jsonify(agent_mgr.list_sessions(active_only=active_only))
+
+
+@app.route('/api/agent/sessions/<session_id>/ingest', methods=['POST'])
+@login_required
+def agent_start_ingest(session_id):
+    """Queue the standard ingest command sequence for the connected switch."""
+    session = agent_mgr.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    if not session.get('switch_ip'):
+        return jsonify({'error': 'No switch discovered in this session yet'}), 400
+
+    data     = request.get_json() or {}
+    username = data.get('username', 'admin')
+    password = data.get('password', '')
+
+    cmd_ids = agent_mgr.queue_ingest(
+        session_id, session['switch_ip'], username, password
+    )
+    agent_mgr.update_session(session_id, status='ingesting')
+    app.logger.info(
+        f"[Agent] Ingest queued for session {session_id[:8]} "
+        f"({session['switch_ip']}) — {len(cmd_ids)} commands"
+    )
+    return jsonify({'ok': True, 'queued': len(cmd_ids)})
+
+
+@app.route('/api/agent/sessions/<session_id>/progress', methods=['GET'])
+@login_required
+def agent_session_progress(session_id):
+    """Return session info and all command results — polled by the UI."""
+    session = agent_mgr.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    commands = agent_mgr.get_session_commands(session_id)
+    return jsonify({'session': session, 'commands': commands})
+
+
+# ── Agent key management (admin only) ─────────────────────────────────────────
+
+@app.route('/api/admin/agent-keys', methods=['GET'])
+@admin_required
+def admin_list_agent_keys():
+    return jsonify(agent_mgr.list_keys())
+
+
+@app.route('/api/admin/agent-keys', methods=['POST'])
+@admin_required
+def admin_create_agent_key():
+    data        = request.get_json() or {}
+    label       = data.get('label', 'Unnamed key')
+    expires_days = data.get('expires_days')
+
+    key_id, raw_key = agent_mgr.generate_key(
+        label=label,
+        created_by=session.get('username', ''),
+        expires_days=int(expires_days) if expires_days else None,
+    )
+    return jsonify({
+        'key_id':  key_id,
+        'api_key': raw_key,
+        'label':   label,
+        'note':    'Store this key securely — it will not be shown again.',
+    })
+
+
+@app.route('/api/admin/agent-keys/<key_id>/revoke', methods=['POST'])
+@admin_required
+def admin_revoke_agent_key(key_id):
+    agent_mgr.revoke_key(key_id)
+    return jsonify({'ok': True})
 
 
 # ==================== Main ====================

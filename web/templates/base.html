@@ -95,6 +95,12 @@
                         </a>
                     </li>
                     <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'ingest' %}active{% endif %}"
+                           href="{{ url_for('ingest') }}">
+                            <i class="bi bi-usb-plug"></i> Ingest
+                        </a>
+                    </li>
+                    <li class="nav-item">
                         <a class="nav-link" href="/static/docs/index.html" target="_blank">
                             <i class="bi bi-book"></i> Docs
                         </a>
@@ -137,6 +143,9 @@
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end">
                             <li><a class="dropdown-item" href="{{ url_for('settings') }}"><i class="bi bi-gear"></i> Settings</a></li>
+                            {% if is_admin %}
+                            <li><a class="dropdown-item" href="{{ url_for('admin_agent_keys') }}"><i class="bi bi-key"></i> Agent Keys</a></li>
+                            {% endif %}
                             <li><hr class="dropdown-divider"></li>
                             <li>
                                 <form method="POST" action="{{ url_for('logout') }}" style="margin:0;">

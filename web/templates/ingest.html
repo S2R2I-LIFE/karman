@@ -1,0 +1,333 @@
+{% extends "base.html" %}
+
+{% block title %}Ingest — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-12">
+    <div class="d-flex justify-content-between align-items-start mb-4">
+      <div>
+        <h1 class="mb-1">
+          <i class="bi bi-usb-plug"></i> Switch Ingest
+        </h1>
+        <p class="text-muted mb-0">
+          Run <code>karman-link</code> on a laptop cabled to a factory-reset switch, then start an
+          ingest here to collect its inventory data.
+        </p>
+      </div>
+      <div class="d-flex gap-2 flex-shrink-0 ms-3">
+        <a href="{{ url_for('admin_agent_keys') }}" class="btn btn-outline-secondary">
+          <i class="bi bi-key"></i> Manage API Keys
+        </a>
+        <button class="btn btn-outline-primary" onclick="loadSessions()">
+          <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- How-to banner -->
+<div class="alert alert-info alert-dismissible fade show mb-4" role="alert">
+  <div class="d-flex gap-3 align-items-start">
+    <i class="bi bi-info-circle-fill fs-5 mt-1"></i>
+    <div>
+      <strong>How to use karman-link</strong>
+      <ol class="mb-0 mt-1">
+        <li>Generate an API key on the <a href="{{ url_for('admin_agent_keys') }}" class="alert-link">Agent Keys</a> page.</li>
+        <li>Cable your laptop's ethernet to the switch's Management0 port.</li>
+        <li>Run: <code>python karman_link.py --server {{ request.host_url.rstrip('/') }} --key &lt;api_key&gt;</code></li>
+        <li>The agent appears below once connected. Click <strong>Start Ingest</strong> to collect data.</li>
+      </ol>
+    </div>
+  </div>
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+
+<!-- Session list -->
+<div id="sessions-container">
+  <div class="text-center py-5 text-muted" id="no-sessions">
+    <i class="bi bi-wifi-off fs-1 d-block mb-3"></i>
+    <p class="mb-1">No active karman-link agents connected.</p>
+    <small>Agents connect automatically when <code>karman_link.py</code> is running on a laptop.</small>
+  </div>
+</div>
+
+<!-- ── Ingest Modal ── -->
+<div class="modal fade" id="ingestModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-play-circle"></i> Start Ingest</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted mb-3">
+          These credentials will be used to authenticate to the switch during ingest.
+          Leave blank to use the defaults discovered by the agent.
+        </p>
+        <input type="hidden" id="ingest-session-id">
+        <div class="mb-3">
+          <label class="form-label">Username</label>
+          <input type="text" class="form-control" id="ingest-username" value="admin">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Password</label>
+          <input type="password" class="form-control" id="ingest-password" placeholder="(blank for empty password)">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="startIngest()">
+          <i class="bi bi-play-circle"></i> Start Ingest
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── state ──────────────────────────────────────────────────────────────────
+const activeSessions = {};   // session_id → {timer, element}
+let pollTimer = null;
+
+// ── session list polling ───────────────────────────────────────────────────
+function loadSessions() {
+  fetch('/api/agent/sessions?active=false')
+    .then(r => r.json())
+    .then(sessions => {
+      const container = document.getElementById('sessions-container');
+      const noSessions = document.getElementById('no-sessions');
+
+      if (!sessions.length) {
+        container.innerHTML = '';
+        container.appendChild(noSessions);
+        noSessions.style.display = '';
+        return;
+      }
+
+      noSessions.style.display = 'none';
+
+      // Build set of current session IDs
+      const currentIds = new Set(sessions.map(s => s.session_id));
+
+      // Remove cards for gone sessions
+      for (const id of Object.keys(activeSessions)) {
+        if (!currentIds.has(id)) {
+          const el = document.getElementById(`session-${id}`);
+          if (el) el.remove();
+          clearInterval(activeSessions[id].progressTimer);
+          delete activeSessions[id];
+        }
+      }
+
+      // Add or update cards
+      for (const s of sessions) {
+        upsertSessionCard(container, s);
+      }
+    })
+    .catch(e => console.warn('Session load error:', e));
+}
+
+function upsertSessionCard(container, s) {
+  const id = s.session_id;
+  let card = document.getElementById(`session-${id}`);
+
+  if (!card) {
+    card = document.createElement('div');
+    card.id = `session-${id}`;
+    card.className = 'card mb-3 session-card';
+    container.insertBefore(card, container.firstChild);
+    activeSessions[id] = {};
+  }
+
+  const status     = s.status || 'connected';
+  const statusBadge = statusBadgeHtml(status);
+  const ago         = s.last_heartbeat ? timeAgo(s.last_heartbeat) : '—';
+  const switchIp    = s.switch_ip || '—';
+  const model       = s.switch_model || '—';
+  const serial      = s.switch_serial || '—';
+  const eos         = s.switch_eos || '—';
+  const hostname    = s.switch_hostname || '—';
+
+  const canIngest = s.switch_ip && !['ingesting', 'disconnected'].includes(status);
+  const ingestBtn = canIngest
+    ? `<button class="btn btn-success btn-sm" onclick="openIngestModal('${id}')">
+         <i class="bi bi-play-circle"></i> Start Ingest
+       </button>`
+    : '';
+
+  card.innerHTML = `
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <div class="d-flex align-items-center gap-2">
+        <i class="bi bi-laptop"></i>
+        <strong>${hostname !== '—' ? hostname : 'Switch'}</strong>
+        <span class="text-muted small">(${switchIp})</span>
+        ${statusBadge}
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <small class="text-muted">Heartbeat: ${ago}</small>
+        ${ingestBtn}
+      </div>
+    </div>
+    <div class="card-body py-2">
+      <div class="row g-3 mb-2">
+        <div class="col-sm-3">
+          <small class="text-muted d-block">Model</small>
+          <span>${model}</span>
+        </div>
+        <div class="col-sm-3">
+          <small class="text-muted d-block">EOS Version</small>
+          <span>${eos}</span>
+        </div>
+        <div class="col-sm-3">
+          <small class="text-muted d-block">Serial</small>
+          <span>${serial}</span>
+        </div>
+        <div class="col-sm-3">
+          <small class="text-muted d-block">Session</small>
+          <span class="font-monospace small">${id.slice(0, 8)}…</span>
+        </div>
+      </div>
+      <div id="progress-${id}"></div>
+    </div>
+  `;
+
+  // Start progress polling if ingesting
+  if (status === 'ingesting' && !activeSessions[id].progressTimer) {
+    activeSessions[id].progressTimer = setInterval(() => pollProgress(id), 2000);
+    pollProgress(id);
+  } else if (status === 'ingesting') {
+    pollProgress(id);
+  } else if (status === 'ingest_complete' || status === 'ingest_failed') {
+    pollProgress(id);
+  }
+}
+
+// ── progress polling ────────────────────────────────────────────────────────
+function pollProgress(sessionId) {
+  fetch(`/api/agent/sessions/${sessionId}/progress`)
+    .then(r => r.json())
+    .then(data => {
+      renderProgress(sessionId, data);
+      const s = data.session || {};
+      const done = ['ingest_complete', 'ingest_failed', 'disconnected'].includes(s.status);
+      if (done && activeSessions[sessionId] && activeSessions[sessionId].progressTimer) {
+        clearInterval(activeSessions[sessionId].progressTimer);
+        activeSessions[sessionId].progressTimer = null;
+      }
+    })
+    .catch(e => console.warn('Progress error:', e));
+}
+
+function renderProgress(sessionId, data) {
+  const el = document.getElementById(`progress-${sessionId}`);
+  if (!el) return;
+  const commands = data.commands || [];
+  if (!commands.length) { el.innerHTML = ''; return; }
+
+  const total     = commands.length;
+  const completed = commands.filter(c => c.completed_at).length;
+  const failed    = commands.filter(c => c.completed_at && c.success === 0).length;
+  const pct       = Math.round(completed / total * 100);
+
+  const barColor = failed ? 'bg-danger' : (completed === total ? 'bg-success' : 'bg-primary');
+
+  let rows = commands.map(c => {
+    const payload = c.payload ? JSON.parse(c.payload) : {};
+    const cmds    = (payload.commands || []).join(', ');
+    let icon, cls;
+    if (c.completed_at && c.success) { icon = 'check-circle-fill'; cls = 'text-success'; }
+    else if (c.completed_at && !c.success) { icon = 'x-circle-fill'; cls = 'text-danger'; }
+    else if (c.claimed_at) { icon = 'arrow-repeat'; cls = 'text-primary'; }
+    else { icon = 'clock'; cls = 'text-muted'; }
+    return `<tr>
+      <td><i class="bi bi-${icon} ${cls}"></i></td>
+      <td class="font-monospace small">${escHtml(cmds)}</td>
+      <td class="text-muted small">${c.completed_at ? 'Done' : (c.claimed_at ? 'Running…' : 'Queued')}</td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="progress mb-2" style="height:6px;">
+      <div class="progress-bar ${barColor}" style="width:${pct}%"></div>
+    </div>
+    <table class="table table-sm table-borderless mb-0" style="font-size:0.82rem;">
+      <tbody>${rows}</tbody>
+    </table>
+    ${completed === total
+      ? `<div class="mt-2 text-${failed ? 'danger' : 'success'}">
+           <i class="bi bi-${failed ? 'x-circle' : 'check-circle'}-fill"></i>
+           Ingest ${failed ? 'completed with errors' : 'complete'} — ${completed}/${total} commands.
+         </div>`
+      : ''}
+  `;
+}
+
+// ── ingest modal ────────────────────────────────────────────────────────────
+function openIngestModal(sessionId) {
+  document.getElementById('ingest-session-id').value = sessionId;
+  document.getElementById('ingest-password').value = '';
+  new bootstrap.Modal(document.getElementById('ingestModal')).show();
+}
+
+function startIngest() {
+  const sessionId = document.getElementById('ingest-session-id').value;
+  const username  = document.getElementById('ingest-username').value || 'admin';
+  const password  = document.getElementById('ingest-password').value || '';
+
+  bootstrap.Modal.getInstance(document.getElementById('ingestModal')).hide();
+
+  fetch(`/api/agent/sessions/${sessionId}/ingest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) { alert('Error: ' + data.error); return; }
+    // Reload sessions to pick up new status
+    setTimeout(loadSessions, 500);
+    // Start progress polling for this session
+    if (activeSessions[sessionId]) {
+      activeSessions[sessionId].progressTimer =
+        setInterval(() => pollProgress(sessionId), 2000);
+      pollProgress(sessionId);
+    }
+  })
+  .catch(e => alert('Request failed: ' + e));
+}
+
+// ── helpers ─────────────────────────────────────────────────────────────────
+function statusBadgeHtml(status) {
+  const map = {
+    connected:       ['secondary', 'Connected'],
+    ready:           ['info',      'Switch Ready'],
+    ingesting:       ['primary',   'Ingesting…'],
+    ingest_complete: ['success',   'Ingest Complete'],
+    ingest_failed:   ['danger',    'Ingest Failed'],
+    no_switch:       ['warning',   'No Switch Found'],
+    disconnected:    ['dark',      'Disconnected'],
+    error:           ['danger',    'Error'],
+  };
+  const [color, label] = map[status] || ['secondary', status];
+  return `<span class="badge bg-${color}">${label}</span>`;
+}
+
+function timeAgo(ts) {
+  const diff = Math.floor(Date.now() / 1000 - ts);
+  if (diff < 10)  return 'just now';
+  if (diff < 60)  return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  return `${Math.floor(diff/3600)}h ago`;
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── init ────────────────────────────────────────────────────────────────────
+loadSessions();
+pollTimer = setInterval(loadSessions, 5000);
+</script>
+{% endblock %}
