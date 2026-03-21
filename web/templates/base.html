@@ -65,6 +65,18 @@
                         </a>
                     </li>
                     <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'bgp_dashboard' %}active{% endif %}"
+                           href="{{ url_for('bgp_dashboard') }}">
+                            <i class="bi bi-arrows-angle-expand"></i> BGP
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'compliance' %}active{% endif %}"
+                           href="{{ url_for('compliance') }}">
+                            <i class="bi bi-shield-check"></i> Compliance
+                        </a>
+                    </li>
+                    <li class="nav-item">
                         <a class="nav-link {% if request.endpoint and 'configlet' in request.endpoint %}active{% endif %}"
                            href="{{ url_for('configlets') }}">
                             <i class="bi bi-file-earmark-code"></i> Configlets
@@ -145,6 +157,7 @@
                             <li><a class="dropdown-item" href="{{ url_for('settings') }}"><i class="bi bi-gear"></i> Settings</a></li>
                             {% if is_admin %}
                             <li><a class="dropdown-item" href="{{ url_for('admin_agent_keys') }}"><i class="bi bi-key"></i> Agent Keys</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('admin_alerts') }}"><i class="bi bi-bell-fill"></i> Alert Rules</a></li>
                             {% endif %}
                             <li><hr class="dropdown-divider"></li>
                             <li>

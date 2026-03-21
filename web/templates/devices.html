@@ -102,6 +102,7 @@
                                 <th>Site</th>
                                 <th>Model</th>
                                 <th>Management</th>
+                                <th>Last Backup</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
@@ -131,6 +132,15 @@
                                         <span class="badge bg-secondary">
                                             <i class="bi bi-gear"></i> {{ device.management_type.value }}
                                         </span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if device.last_backup_at %}
+                                        <span class="text-muted small" title="{{ device.last_backup_at }}">
+                                            {{ device.last_backup_at | timeago }}
+                                        </span>
+                                    {% else %}
+                                        <span class="text-muted small">Never</span>
                                     {% endif %}
                                 </td>
                                 <td>

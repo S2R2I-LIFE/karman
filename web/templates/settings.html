@@ -213,6 +213,74 @@
             </div>
             {% endif %}
 
+            <!-- Config Backup Settings (admin only) -->
+            {% if user.is_admin and backup_settings %}
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-cloud-arrow-down"></i> Config Backup</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">
+                        Automatically back up running configs from all devices on a schedule.
+                        Backs up to configlets and detects drift.
+                    </p>
+                    <form method="POST" action="{{ url_for('admin_settings_backup') }}">
+                        <div class="mb-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="backupEnabled"
+                                       name="backup_enabled" value="true"
+                                       {% if backup_settings.enabled == 'true' %}checked{% endif %}>
+                                <label class="form-check-label" for="backupEnabled">Enable scheduled backups</label>
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Frequency</label>
+                                <div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="radio" name="backup_frequency"
+                                               id="freqDaily" value="daily"
+                                               {% if backup_settings.frequency != 'weekly' %}checked{% endif %}
+                                               onchange="toggleDow()">
+                                        <label class="form-check-label" for="freqDaily">Daily</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="radio" name="backup_frequency"
+                                               id="freqWeekly" value="weekly"
+                                               {% if backup_settings.frequency == 'weekly' %}checked{% endif %}
+                                               onchange="toggleDow()">
+                                        <label class="form-check-label" for="freqWeekly">Weekly</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="backupHour" class="form-label">Hour (UTC)</label>
+                                <select class="form-select" id="backupHour" name="backup_hour">
+                                    {% for h in range(24) %}
+                                    <option value="{{ h }}" {% if backup_settings.hour|int == h %}selected{% endif %}>
+                                        {{ '%02d:00'|format(h) }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-4" id="dowSection"
+                                 style="{{ 'display:none' if backup_settings.frequency != 'weekly' else '' }}">
+                                <label for="backupDow" class="form-label">Day of Week</label>
+                                <select class="form-select" id="backupDow" name="backup_day_of_week">
+                                    {% for i, day in [(0,'Monday'),(1,'Tuesday'),(2,'Wednesday'),(3,'Thursday'),(4,'Friday'),(5,'Saturday'),(6,'Sunday')] %}
+                                    <option value="{{ i }}" {% if backup_settings.day_of_week|int == i %}selected{% endif %}>{{ day }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-save"></i> Save Backup Settings
+                        </button>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
+
             <!-- Custom Dashboard Tiles -->
             <div class="card mb-4">
                 <div class="card-header d-flex justify-content-between align-items-center">
@@ -270,6 +338,12 @@
 
 {% block extra_js %}
 <script>
+function toggleDow() {
+    const weekly = document.getElementById('freqWeekly').checked;
+    const dow = document.getElementById('dowSection');
+    if (dow) dow.style.display = weekly ? '' : 'none';
+}
+
 // Load saved theme preference
 const savedTheme = localStorage.getItem('theme') || 'auto';
 document.getElementById('theme-' + savedTheme).checked = true;

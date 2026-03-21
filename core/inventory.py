@@ -43,6 +43,8 @@ class Device:
     cvp_managed: bool = False
     gnmi_port: int = 6030
     polling_enabled: bool = True
+    last_backup_at: Optional[str] = None
+    last_synced_at: Optional[str] = None
 
     def to_dict(self):
         return {
@@ -105,6 +107,14 @@ class InventoryManager:
             conn.commit()
         except sqlite3.OperationalError:
             pass  # Column already exists
+
+        # Migration: add last_backup_at / last_synced_at
+        for col in ('last_backup_at TIMESTAMP', 'last_synced_at TIMESTAMP'):
+            try:
+                cursor.execute(f'ALTER TABLE devices ADD COLUMN {col}')
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS device_configlets (
@@ -197,7 +207,8 @@ class InventoryManager:
 
         cursor.execute('''
             SELECT hostname, ip_address, model, serial_number, eos_version,
-                   management_type, role, site, container, cvp_managed, gnmi_port, polling_enabled
+                   management_type, role, site, container, cvp_managed, gnmi_port, polling_enabled,
+                   last_backup_at, last_synced_at
             FROM devices WHERE hostname = ?
         ''', (hostname,))
         row = cursor.fetchone()
@@ -234,6 +245,8 @@ class InventoryManager:
             cvp_managed=bool(row[9]),
             gnmi_port=int(row[10]) if row[10] is not None else 6030,
             polling_enabled=bool(row[11]) if row[11] is not None else True,
+            last_backup_at=row[12],
+            last_synced_at=row[13],
             configlets=configlets,
             tags=tags
         )

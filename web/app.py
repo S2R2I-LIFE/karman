@@ -10,6 +10,9 @@ import sqlite3
 import re
 import time
 import threading
+import hashlib
+import difflib
+import json
 from pathlib import Path
 
 # Add parent directory to path
@@ -30,6 +33,7 @@ from core.cli_navigator import CLINavigator
 from core.user import UserManager
 from core.notification import NotificationManager
 from core.agent_manager import AgentManager
+from core.alert_manager import AlertManager
 from builder import ConfigletBuilder
 from validator import ConfigValidator
 from web.email_sender import EmailSender
@@ -61,6 +65,7 @@ user_mgr = UserManager(DB_PATH)
 notification_mgr = NotificationManager(DB_PATH)
 email_sender = EmailSender(DB_PATH)
 agent_mgr = AgentManager(DB_PATH)
+alert_mgr = AlertManager(DB_PATH)
 builder = ConfigletBuilder()
 validator = ConfigValidator()
 
@@ -99,6 +104,12 @@ def _collect_device_telemetry(device_info, username, password):
             connector = NetmikoConnector(ip, username, password, timeout=10)
             if connector.connect():
                 device_data['telemetry'] = DeviceTelemetry.collect_from_device(connector)
+                # BGP via SSH
+                try:
+                    bgp_data = _parse_bgp_summary_ssh(connector.execute_command('show ip bgp summary'))
+                    device_data['telemetry']['bgp'] = bgp_data
+                except Exception:
+                    device_data['telemetry']['bgp'] = {}
                 connector.disconnect()
             else:
                 device_data['telemetry']['error'] = 'Connection failed'
@@ -110,6 +121,31 @@ def _collect_device_telemetry(device_info, username, password):
             connector = EAPIConnector(ip, username, password, timeout=10)
             if connector.connect():
                 device_data['telemetry'] = DeviceTelemetry.collect_from_device(connector)
+                # BGP via eAPI
+                try:
+                    res = connector.execute_commands(['show ip bgp summary'])
+                    def _r(r, idx=0):
+                        if not r or idx >= len(r): return {}
+                        item = r[idx]
+                        if not isinstance(item, dict): return {}
+                        rv = item.get('result', {})
+                        return rv if isinstance(rv, dict) else {}
+                    vrfs_raw = _r(res).get('vrfs', {})
+                    bgp_vrfs = {}
+                    for vrf_name, vrf in vrfs_raw.items():
+                        peers = []
+                        for peer_ip, p in vrf.get('peers', {}).items():
+                            peers.append({
+                                'neighbor': peer_ip,
+                                'asn': p.get('asn', ''),
+                                'state': p.get('peerState', ''),
+                                'prefixes_received': p.get('prefixReceived', 0),
+                                'uptime': p.get('upDownTime', 0),
+                            })
+                        bgp_vrfs[vrf_name] = {'router_id': vrf.get('routerId', ''), 'peers': peers}
+                    device_data['telemetry']['bgp'] = {'vrfs': bgp_vrfs}
+                except Exception:
+                    device_data['telemetry']['bgp'] = {}
             else:
                 device_data['telemetry']['error'] = 'Connection failed'
         except Exception as e:
@@ -121,10 +157,113 @@ def _collect_device_telemetry(device_info, username, password):
             port = int(gnmi_port) if gnmi_port else 6030
             connector = GNMIConnector(ip, port=port, username=username, password=password, timeout=10)
             device_data['telemetry'] = DeviceTelemetry.collect_from_gnmi(connector)
+            # BGP via eAPI fallback for gNMI devices
+            try:
+                eapi_conn = EAPIConnector(ip, username, password, timeout=5)
+                if eapi_conn.connect():
+                    res = eapi_conn.execute_commands(['show ip bgp summary'])
+                    def _r2(r, idx=0):
+                        if not r or idx >= len(r): return {}
+                        item = r[idx]
+                        if not isinstance(item, dict): return {}
+                        rv = item.get('result', {})
+                        return rv if isinstance(rv, dict) else {}
+                    vrfs_raw = _r2(res).get('vrfs', {})
+                    bgp_vrfs = {}
+                    for vrf_name, vrf in vrfs_raw.items():
+                        peers = []
+                        for peer_ip, p in vrf.get('peers', {}).items():
+                            peers.append({
+                                'neighbor': peer_ip,
+                                'asn': p.get('asn', ''),
+                                'state': p.get('peerState', ''),
+                                'prefixes_received': p.get('prefixReceived', 0),
+                                'uptime': p.get('upDownTime', 0),
+                            })
+                        bgp_vrfs[vrf_name] = {'router_id': vrf.get('routerId', ''), 'peers': peers}
+                    device_data['telemetry']['bgp'] = {'vrfs': bgp_vrfs}
+                else:
+                    device_data['telemetry']['bgp'] = {}
+            except Exception:
+                device_data['telemetry']['bgp'] = {}
         except Exception as e:
             device_data['telemetry']['error'] = str(e)
 
     return device_data
+
+
+def _parse_bgp_summary_ssh(output: str) -> dict:
+    """Parse 'show ip bgp summary' text output into vrfs dict."""
+    peers = []
+    in_peers = False
+    for line in output.splitlines():
+        if 'Neighbor' in line and 'AS' in line:
+            in_peers = True
+            continue
+        if in_peers and line.strip():
+            parts = line.split()
+            if len(parts) >= 9 and '.' in parts[0]:
+                peers.append({
+                    'neighbor': parts[0], 'asn': parts[2],
+                    'state': parts[8], 'prefixes_received': 0,
+                    'uptime': parts[7],
+                })
+    return {'vrfs': {'default': {'router_id': '', 'peers': peers}}}
+
+
+def _check_bgp_state_changes(result: list):
+    """Compare current BGP peer states to saved snapshot; notify admins on changes."""
+    # Build current snapshot: key = "hostname/vrf/peer_ip" -> state
+    current = {}
+    for entry in result:
+        hostname = entry.get('hostname', '')
+        bgp = entry.get('telemetry', {}).get('bgp', {})
+        for vrf_name, vrf_data in bgp.get('vrfs', {}).items():
+            for peer in vrf_data.get('peers', []):
+                key = f"{hostname}/{vrf_name}/{peer.get('neighbor', '')}"
+                current[key] = peer.get('state', '')
+
+    # Load previous snapshot
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM app_settings WHERE key='bgp_peer_states'")
+    snap_row = cursor.fetchone()
+    conn.close()
+
+    previous = json.loads(snap_row[0]) if snap_row and snap_row[0] else {}
+
+    # Detect transitions: Established → something else
+    changes = []
+    for key, old_state in previous.items():
+        new_state = current.get(key, '')
+        if old_state == 'Established' and new_state != 'Established' and new_state != '':
+            changes.append((key, old_state, new_state))
+
+    if changes:
+        try:
+            admins = [u for u in user_mgr.list_all_users() if u.is_admin]
+            for key, old_state, new_state in changes:
+                parts = key.split('/')
+                h, vrf, peer = parts[0], parts[1], parts[2] if len(parts) > 2 else ''
+                msg = (f"BGP peer {peer} (VRF {vrf}) on {h} changed from "
+                       f"{old_state} to {new_state}.")
+                for admin in admins:
+                    notification_mgr.create_notification(
+                        admin.user_id, 'bgp_state_change',
+                        f'BGP state change: {h}', msg
+                    )
+        except Exception as e:
+            app.logger.error(f"[BGP] Notification error: {e}")
+
+    # Save new snapshot
+    conn2 = sqlite3.connect(DB_PATH)
+    conn2.execute(
+        "INSERT INTO app_settings(key, value) VALUES('bgp_peer_states', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (json.dumps(current),)
+    )
+    conn2.commit()
+    conn2.close()
 
 def _collect_all_telemetry(username, password):
     """Collect telemetry from all devices concurrently. Returns list of device dicts."""
@@ -222,6 +361,11 @@ def _background_telemetry_loop():
                 if result:
                     _write_telemetry_cache(result)
                     app.logger.info(f"[BG] Telemetry cache refreshed ({len(result)} devices)")
+                    # BGP state change detection
+                    try:
+                        _check_bgp_state_changes(result)
+                    except Exception as _bgp_err:
+                        app.logger.error(f"[BG] BGP state check error: {_bgp_err}")
         except Exception as e:
             app.logger.error(f"[BG] Telemetry loop error: {e}")
         time.sleep(15)  # Check every 15 s; poll only when stale
@@ -231,6 +375,381 @@ _bg_telemetry_thread = threading.Thread(
 )
 _bg_telemetry_thread.start()
 print("[INIT] Background telemetry thread started")
+
+
+# ── Device backup helper ──────────────────────────────────────────────────────
+
+def _do_device_backup(hostname, ip, mgmt_type, gnmi_port, username, password) -> dict:
+    """Fetch running config, store as configlet, detect drift, update devices row.
+
+    Returns dict: {success, drifted, old_hash, new_hash, error}
+    """
+    try:
+        config = None
+
+        # eAPI first (works for eapi and gnmi management types too)
+        if mgmt_type in ('eapi', 'gnmi'):
+            try:
+                connector = EAPIConnector(host=ip, username=username, password=password)
+                if connector.connect():
+                    config = connector.get_running_config()
+            except Exception:
+                config = None
+
+        # SSH fallback (or primary for ssh type)
+        if config is None:
+            connector = NetmikoConnector(host=ip, username=username, password=password)
+            if connector.connect():
+                config = connector.get_running_config()
+                connector.disconnect()
+
+        if not config:
+            raise Exception("No config retrieved")
+
+        new_hash = hashlib.sha256(config.encode()).hexdigest()
+
+        # Read current hash from DB
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('SELECT config_hash FROM devices WHERE hostname = ?', (hostname,))
+        row = cursor.fetchone()
+        conn.close()
+        old_hash = row[0] if row and row[0] else None
+        drifted = (old_hash is not None) and (old_hash != new_hash)
+
+        # Snapshot management: roll current → prev before overwriting
+        if old_hash != new_hash:
+            current_snap_key = f'config_snapshot_{hostname}'
+            conn2 = sqlite3.connect(DB_PATH)
+            c2 = conn2.cursor()
+            c2.execute('SELECT value FROM app_settings WHERE key = ?', (current_snap_key,))
+            snap_row = c2.fetchone()
+            if snap_row:
+                c2.execute(
+                    "INSERT INTO app_settings(key, value) VALUES(?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (f'config_prev_{hostname}', snap_row[0])
+                )
+            c2.execute(
+                "INSERT INTO app_settings(key, value) VALUES(?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (current_snap_key, config)
+            )
+            conn2.commit()
+            conn2.close()
+
+        # Store/update configlet
+        configlet_name = f"{hostname}-running-config"
+        configlet = Configlet(
+            name=configlet_name,
+            config=config,
+            description=f"Running config backed up from {hostname}",
+            configlet_type="static"
+        )
+        if configlet_name in configlet_mgr.list_configlets():
+            configlet_mgr.update_configlet(
+                configlet_name, config,
+                author='backup-thread',
+                reason=f"Auto-backup at {datetime.utcnow().isoformat()}"
+            )
+        else:
+            configlet_mgr.create_configlet(configlet, author='backup-thread')
+
+        # Update device row
+        now_iso = datetime.utcnow().isoformat()
+        compliance = 'DRIFT' if drifted else 'CLEAN'
+        conn3 = sqlite3.connect(DB_PATH)
+        conn3.execute(
+            'UPDATE devices SET last_backup_at=?, last_synced_at=?, '
+            'config_hash=?, compliance_status=? WHERE hostname=?',
+            (now_iso, now_iso, new_hash, compliance, hostname)
+        )
+        conn3.commit()
+        conn3.close()
+
+        return {'success': True, 'drifted': drifted, 'old_hash': old_hash, 'new_hash': new_hash}
+
+    except Exception as e:
+        app.logger.error(f"[Backup] {hostname}: {e}")
+        # Notify admins of backup failure (best-effort)
+        try:
+            all_users = user_mgr.list_all_users()
+            for u in all_users:
+                if u.is_admin:
+                    notification_mgr.create_notification(
+                        u.user_id, 'backup_failed',
+                        f'Backup failed: {hostname}',
+                        f'Automatic config backup failed for {hostname}: {e}'
+                    )
+        except Exception:
+            pass
+        return {'success': False, 'drifted': False, 'old_hash': None, 'new_hash': None,
+                'error': str(e)}
+
+
+# ── Background backup loop ────────────────────────────────────────────────────
+
+def _background_backup_loop():
+    """Daemon thread: periodically back up running configs for all devices."""
+    time.sleep(30 + (os.getpid() % 7))  # stagger
+    while True:
+        try:
+            # Check if backup is enabled
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM app_settings WHERE key='backup_enabled'")
+            row = cursor.fetchone()
+            enabled = row and row[0] == 'true'
+
+            if not enabled:
+                conn.close()
+                time.sleep(60)
+                continue
+
+            # Lock check (prevent duplicate runs across workers)
+            now = time.time()
+            cursor.execute("SELECT value FROM app_settings WHERE key='backup_lock_at'")
+            lock_row = cursor.fetchone()
+            lock_age = now - float(lock_row[0]) if lock_row else 999
+
+            if lock_age < 600:
+                conn.close()
+                time.sleep(60)
+                continue
+
+            # Read schedule settings
+            cursor.execute("SELECT value FROM app_settings WHERE key='backup_frequency'")
+            freq_row = cursor.fetchone()
+            frequency = freq_row[0] if freq_row else 'daily'
+
+            cursor.execute("SELECT value FROM app_settings WHERE key='backup_hour'")
+            hour_row = cursor.fetchone()
+            backup_hour = int(hour_row[0]) if hour_row else 2
+
+            # Claim lock
+            cursor.execute(
+                "INSERT INTO app_settings(key, value) VALUES('backup_lock_at', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(now),)
+            )
+            conn.commit()
+
+            # Get devices due for backup
+            cursor.execute(
+                "SELECT hostname, ip_address, management_type, gnmi_port FROM devices"
+            )
+            devices = cursor.fetchall()
+            conn.close()
+
+            import datetime as _dt
+            current_hour = _dt.datetime.utcnow().hour
+            current_dow = _dt.datetime.utcnow().weekday()  # 0=Monday
+
+            cursor2 = sqlite3.connect(DB_PATH).cursor()
+            cursor2.execute("SELECT value FROM app_settings WHERE key='backup_day_of_week'")
+            dow_row = cursor2.fetchone()
+            backup_dow = int(dow_row[0]) if dow_row else 0
+            cursor2.connection.close()
+
+            # Only run at the designated hour
+            if current_hour != backup_hour:
+                time.sleep(60)
+                continue
+            if frequency == 'weekly' and current_dow != backup_dow:
+                time.sleep(60)
+                continue
+
+            username = os.environ.get('DEFAULT_DEVICE_USERNAME', 'admin')
+            password = os.environ.get('DEFAULT_DEVICE_PASSWORD', '')
+
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=5) as pool:
+                futures = [
+                    pool.submit(_do_device_backup, d[0], d[1], d[2], d[3], username, password)
+                    for d in devices
+                ]
+                for f in futures:
+                    try:
+                        f.result(timeout=60)
+                    except Exception as e:
+                        app.logger.error(f"[BackupLoop] future error: {e}")
+
+            app.logger.info(f"[BackupLoop] Completed backup for {len(devices)} devices")
+
+        except Exception as e:
+            app.logger.error(f"[BackupLoop] Error: {e}")
+        time.sleep(60)
+
+
+_bg_backup_thread = threading.Thread(
+    target=_background_backup_loop, daemon=True, name='backup-bg'
+)
+_bg_backup_thread.start()
+print("[INIT] Background backup thread started")
+
+
+# ── Alert firing helpers ──────────────────────────────────────────────────────
+
+def _fire_alert(rule, hostname, value):
+    """Open an alert event and notify all admins."""
+    event_id = alert_mgr.open_event(rule.rule_id, hostname, value)
+    msg = (f"Alert '{rule.rule_name}' fired for {hostname}. "
+           f"Type: {rule.alert_type}"
+           + (f", value: {value:.1f}" if value is not None else "") + ".")
+    try:
+        for u in user_mgr.list_all_users():
+            if u.is_admin:
+                notification_mgr.create_notification(
+                    u.user_id, 'alert_firing',
+                    f'Alert: {rule.rule_name} on {hostname}', msg
+                )
+                if rule.send_email and u.email:
+                    try:
+                        email_sender.send_email(
+                            u.email,
+                            f'[Kármán Alert] {rule.rule_name} fired on {hostname}',
+                            f'<p>{msg}</p>',
+                            'alert_firing'
+                        )
+                    except Exception:
+                        pass
+    except Exception as e:
+        app.logger.error(f"[Alert] notify error: {e}")
+    return event_id
+
+
+def _resolve_alert(rule, event, hostname):
+    """Resolve an alert event and notify admins."""
+    alert_mgr.resolve_event(event.event_id)
+    msg = f"Alert '{rule.rule_name}' resolved for {hostname}."
+    try:
+        for u in user_mgr.list_all_users():
+            if u.is_admin:
+                notification_mgr.create_notification(
+                    u.user_id, 'alert_resolved',
+                    f'Resolved: {rule.rule_name} on {hostname}', msg
+                )
+    except Exception as e:
+        app.logger.error(f"[Alert] resolve notify error: {e}")
+
+
+# ── Background alert evaluation loop ─────────────────────────────────────────
+
+def _background_alert_loop():
+    """Daemon thread: evaluate alert rules against cached telemetry every 30s."""
+    time.sleep(20 + (os.getpid() % 5))
+    while True:
+        try:
+            now = time.time()
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+
+            # Lock to prevent duplicate evaluation across workers
+            cursor.execute("SELECT value FROM app_settings WHERE key='alert_lock_at'")
+            lock_row = cursor.fetchone()
+            lock_age = now - float(lock_row[0]) if lock_row else 999
+
+            if lock_age < 60:
+                conn.close()
+                time.sleep(30)
+                continue
+
+            cursor.execute(
+                "INSERT INTO app_settings(key, value) VALUES('alert_lock_at', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(now),)
+            )
+
+            # Read telemetry cache
+            cursor.execute("SELECT devices_json FROM telemetry_cache WHERE id=1")
+            cache_row = cursor.fetchone()
+            conn.commit()
+            conn.close()
+
+            if not cache_row:
+                time.sleep(30)
+                continue
+
+            devices_data = json.loads(cache_row[0])
+            rules = alert_mgr.list_rules()
+            enabled_rules = [r for r in rules if r.is_enabled]
+
+            if not enabled_rules:
+                time.sleep(30)
+                continue
+
+            for entry in devices_data:
+                hostname = entry.get('hostname', '')
+                telemetry = entry.get('telemetry', {})
+
+                for rule in enabled_rules:
+                    # Scope filter
+                    if rule.scope != 'all' and rule.scope != hostname:
+                        continue
+
+                    # Extract metric value
+                    value = None
+                    breached = False
+
+                    if rule.alert_type == 'cpu':
+                        value = telemetry.get('system', {}).get('cpu_percent')
+                        if value is not None and rule.threshold is not None:
+                            breached = value >= rule.threshold
+
+                    elif rule.alert_type == 'memory':
+                        value = telemetry.get('system', {}).get('memory_percent')
+                        if value is not None and rule.threshold is not None:
+                            breached = value >= rule.threshold
+
+                    elif rule.alert_type == 'interface_down_count':
+                        value = telemetry.get('interfaces', {}).get('down', 0)
+                        if rule.threshold is not None:
+                            breached = value >= rule.threshold
+
+                    elif rule.alert_type == 'device_down':
+                        breached = not telemetry.get('reachable', True)
+                        value = 0 if telemetry.get('reachable') else 1
+
+                    elif rule.alert_type == 'temperature_critical':
+                        sensors = telemetry.get('sensors', [])
+                        breached = any(s.get('status') == 'critical' for s in sensors)
+                        value = 1 if breached else 0
+
+                    # Event state machine
+                    active_event = alert_mgr.get_active_event(rule.rule_id, hostname)
+
+                    if breached and active_event is None:
+                        _fire_alert(rule, hostname, value)
+
+                    elif breached and active_event is not None:
+                        # Re-notify if cooldown elapsed
+                        cooldown_secs = rule.cooldown_minutes * 60
+                        notified = active_event.notified_at or active_event.triggered_at
+                        if now - notified >= cooldown_secs:
+                            alert_mgr.update_notified_at(active_event.event_id)
+                            _fire_alert.__wrapped__ = True  # log only, already open
+                            msg = (f"Alert '{rule.rule_name}' still firing on {hostname}. "
+                                   f"Value: {value}")
+                            for u in user_mgr.list_all_users():
+                                if u.is_admin:
+                                    notification_mgr.create_notification(
+                                        u.user_id, 'alert_firing',
+                                        f'Ongoing: {rule.rule_name} on {hostname}', msg
+                                    )
+
+                    elif not breached and active_event is not None:
+                        _resolve_alert(rule, active_event, hostname)
+
+        except Exception as e:
+            app.logger.error(f"[AlertLoop] Error: {e}")
+        time.sleep(30)
+
+
+_bg_alert_thread = threading.Thread(
+    target=_background_alert_loop, daemon=True, name='alert-bg'
+)
+_bg_alert_thread.start()
+print("[INIT] Background alert thread started")
 
 # Check if first user setup is needed
 first_user = user_mgr.is_first_user()
@@ -430,7 +949,16 @@ def settings():
     """User settings page"""
     user = user_mgr.get_user_by_username(session['username'])
     email_settings = email_sender.get_email_settings() if user.is_admin else None
-    return render_template('settings.html', user=user, email_settings=email_settings)
+    backup_settings = None
+    if user.is_admin:
+        backup_settings = {
+            'enabled': email_sender.get_setting('backup_enabled') or 'false',
+            'frequency': email_sender.get_setting('backup_frequency') or 'daily',
+            'hour': email_sender.get_setting('backup_hour') or '2',
+            'day_of_week': email_sender.get_setting('backup_day_of_week') or '0',
+        }
+    return render_template('settings.html', user=user, email_settings=email_settings,
+                           backup_settings=backup_settings)
 
 @app.route('/admin/settings/email', methods=['POST'])
 @login_required
@@ -448,6 +976,19 @@ def admin_settings_email():
         email_sender.set_setting('smtp_password', new_password)
     flash('Email settings saved.', 'success')
     return redirect(url_for('settings'))
+
+@app.route('/admin/settings/backup', methods=['POST'])
+@login_required
+@admin_required
+def admin_settings_backup():
+    """Save config backup schedule settings."""
+    email_sender.set_setting('backup_enabled', 'true' if request.form.get('backup_enabled') else 'false')
+    email_sender.set_setting('backup_frequency', request.form.get('backup_frequency', 'daily'))
+    email_sender.set_setting('backup_hour', request.form.get('backup_hour', '2'))
+    email_sender.set_setting('backup_day_of_week', request.form.get('backup_day_of_week', '0'))
+    flash('Backup settings saved.', 'success')
+    return redirect(url_for('settings'))
+
 
 @app.route('/admin/access-requests')
 @login_required
@@ -944,77 +1485,26 @@ def sync_device(hostname):
         if not device:
             return jsonify({'success': False, 'error': 'Device not found'}), 404
 
-        # Get credentials from request or environment
         data = request.get_json() or {}
-        username = data.get('username', os.environ.get('DEVICE_USERNAME', 'admin'))
-        password = data.get('password', os.environ.get('DEVICE_PASSWORD', ''))
+        username = data.get('username', os.environ.get('DEFAULT_DEVICE_USERNAME', 'admin'))
+        password = data.get('password', os.environ.get('DEFAULT_DEVICE_PASSWORD', ''))
 
-        # Note: Empty password is allowed (default Arista switches use admin with no password)
+        result = _do_device_backup(
+            hostname, device.ip_address,
+            device.management_type.value, device.gnmi_port,
+            username, password
+        )
 
-        # Try eAPI first, fallback to SSH
-        try:
-            connector = EAPIConnector(
-                host=device.ip_address,
-                username=username,
-                password=password
-            )
-            if connector.connect():
-                config = connector.get_running_config()
-                device_info = connector.get_device_info()
-
-                # Create or update a configlet with the running config
-                configlet_name = f"{hostname}-running-config"
-                configlet = Configlet(
-                    name=configlet_name,
-                    config=config,
-                    description=f"Running config synced from {hostname}",
-                    configlet_type="static"
-                )
-
-                if configlet_name in configlet_mgr.list_configlets():
-                    configlet_mgr.update_configlet(
-                        configlet_name, config,
-                        author=session.get('username', 'web'),
-                        reason=f"Synced from device at {datetime.now().isoformat()}"
-                    )
-                else:
-                    configlet_mgr.create_configlet(configlet, author=session.get('username', 'web'))
-
-                flash(f'Configuration synced from {hostname} successfully', 'success')
-                return jsonify({'success': True, 'configlet': configlet_name})
-        except Exception as e:
-            # Fallback to SSH
-            try:
-                connector = NetmikoConnector(
-                    host=device.ip_address,
-                    username=username,
-                    password=password
-                )
-                if connector.connect():
-                    config = connector.get_running_config()
-
-                    configlet_name = f"{hostname}-running-config"
-                    configlet = Configlet(
-                        name=configlet_name,
-                        config=config,
-                        description=f"Running config synced from {hostname}",
-                        configlet_type="static"
-                    )
-
-                    if configlet_name in configlet_mgr.list_configlets():
-                        configlet_mgr.update_configlet(
-                            configlet_name, config,
-                            author=session.get('username', 'web'),
-                            reason=f"Synced from device at {datetime.now().isoformat()}"
-                        )
-                    else:
-                        configlet_mgr.create_configlet(configlet, author=session.get('username', 'web'))
-
-                    connector.disconnect()
-                    flash(f'Configuration synced from {hostname} successfully (via SSH)', 'success')
-                    return jsonify({'success': True, 'configlet': configlet_name})
-            except Exception as ssh_error:
-                raise Exception(f"Both eAPI and SSH failed. eAPI: {str(e)}, SSH: {str(ssh_error)}")
+        if result['success']:
+            msg = f'Configuration synced from {hostname} successfully'
+            if result.get('drifted'):
+                msg += ' (drift detected)'
+            flash(msg, 'success')
+            return jsonify({'success': True, 'configlet': f'{hostname}-running-config',
+                            'drifted': result.get('drifted', False)})
+        else:
+            flash(f'Error syncing device {hostname}: {result.get("error", "Unknown")}', 'danger')
+            return jsonify({'success': False, 'error': result.get('error', 'Unknown')}), 500
 
     except Exception as e:
         flash(f'Error syncing device {hostname}: {str(e)}', 'danger')
@@ -3709,6 +4199,239 @@ def admin_create_agent_key():
 def admin_revoke_agent_key(key_id):
     agent_mgr.revoke_key(key_id)
     return jsonify({'ok': True})
+
+
+# ==================== Alert Rules ====================
+
+@app.route('/admin/alerts')
+@login_required
+@admin_required
+def admin_alerts():
+    rules = alert_mgr.list_rules()
+    events = alert_mgr.get_recent_events(limit=100)
+    # Attach rule names to events
+    rule_map = {r.rule_id: r.rule_name for r in rules}
+    return render_template('admin/alerts.html', rules=rules, events=events, rule_map=rule_map)
+
+
+@app.route('/admin/alerts/create', methods=['POST'])
+@login_required
+@admin_required
+def admin_alerts_create():
+    data = request.get_json() or request.form
+    try:
+        threshold = data.get('threshold')
+        threshold = float(threshold) if threshold not in (None, '') else None
+        alert_mgr.create_rule(
+            rule_name=data.get('rule_name', 'Unnamed'),
+            alert_type=data.get('alert_type', 'cpu'),
+            threshold=threshold,
+            scope=data.get('scope', 'all'),
+            cooldown_minutes=int(data.get('cooldown_minutes', 60)),
+            send_email=bool(data.get('send_email')),
+            created_by=session.get('username', '')
+        )
+        flash('Alert rule created.', 'success')
+        if request.is_json:
+            return jsonify({'success': True})
+    except Exception as e:
+        flash(f'Error creating alert rule: {e}', 'danger')
+        if request.is_json:
+            return jsonify({'success': False, 'error': str(e)}), 400
+    return redirect(url_for('admin_alerts'))
+
+
+@app.route('/admin/alerts/<int:rule_id>/edit', methods=['POST'])
+@login_required
+@admin_required
+def admin_alerts_edit(rule_id):
+    data = request.get_json() or request.form
+    try:
+        threshold = data.get('threshold')
+        threshold = float(threshold) if threshold not in (None, '') else None
+        alert_mgr.update_rule(
+            rule_id,
+            rule_name=data.get('rule_name'),
+            alert_type=data.get('alert_type'),
+            threshold=threshold,
+            scope=data.get('scope', 'all'),
+            cooldown_minutes=int(data.get('cooldown_minutes', 60)),
+            send_email=1 if data.get('send_email') else 0
+        )
+        flash('Alert rule updated.', 'success')
+        if request.is_json:
+            return jsonify({'success': True})
+    except Exception as e:
+        flash(f'Error updating alert rule: {e}', 'danger')
+        if request.is_json:
+            return jsonify({'success': False, 'error': str(e)}), 400
+    return redirect(url_for('admin_alerts'))
+
+
+@app.route('/admin/alerts/<int:rule_id>/delete', methods=['POST'])
+@login_required
+@admin_required
+def admin_alerts_delete(rule_id):
+    alert_mgr.delete_rule(rule_id)
+    flash('Alert rule deleted.', 'success')
+    return redirect(url_for('admin_alerts'))
+
+
+@app.route('/admin/alerts/<int:rule_id>/toggle', methods=['POST'])
+@login_required
+@admin_required
+def admin_alerts_toggle(rule_id):
+    new_state = alert_mgr.toggle_rule(rule_id)
+    if new_state is None:
+        return jsonify({'success': False, 'error': 'Rule not found'}), 404
+    return jsonify({'success': True, 'is_enabled': new_state})
+
+
+@app.route('/api/admin/alerts/events')
+@login_required
+@admin_required
+def api_admin_alerts_events():
+    events = alert_mgr.get_recent_events(limit=100)
+    rules = {r.rule_id: r.rule_name for r in alert_mgr.list_rules()}
+    data = []
+    for e in events:
+        d = e.to_dict()
+        d['rule_name'] = rules.get(e.rule_id, f'Rule {e.rule_id}')
+        data.append(d)
+    return jsonify(data)
+
+
+# ==================== Compliance ====================
+
+@app.route('/compliance')
+@login_required
+def compliance():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        'SELECT hostname, compliance_status, last_backup_at, config_hash FROM devices ORDER BY hostname'
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    devices = []
+    total = clean = drift = never_synced = 0
+    for row in rows:
+        total += 1
+        status = row[1] or 'UNKNOWN'
+        backup_at = row[2]
+        if not backup_at:
+            never_synced += 1
+        elif status == 'CLEAN':
+            clean += 1
+        elif status == 'DRIFT':
+            drift += 1
+        devices.append({
+            'hostname': row[0],
+            'status': status,
+            'last_backup_at': backup_at,
+            'config_hash': row[3],
+        })
+
+    return render_template('compliance.html', devices=devices,
+                           total=total, clean=clean, drift=drift, never_synced=never_synced)
+
+
+@app.route('/api/compliance/<hostname>/diff')
+@login_required
+def api_compliance_diff(hostname):
+    """Return unified diff between previous and current snapshot."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM app_settings WHERE key=?",
+                   (f'config_snapshot_{hostname}',))
+    current_row = cursor.fetchone()
+    cursor.execute("SELECT value FROM app_settings WHERE key=?",
+                   (f'config_prev_{hostname}',))
+    prev_row = cursor.fetchone()
+    conn.close()
+
+    current = current_row[0] if current_row else ''
+    previous = prev_row[0] if prev_row else ''
+
+    if not current and not previous:
+        return jsonify({'diff': '', 'has_diff': False, 'message': 'No snapshots available'})
+
+    diff_lines = list(difflib.unified_diff(
+        previous.splitlines(keepends=True),
+        current.splitlines(keepends=True),
+        fromfile=f'{hostname} (previous)',
+        tofile=f'{hostname} (current)',
+        lineterm=''
+    ))
+    diff_text = ''.join(diff_lines)
+    return jsonify({'diff': diff_text, 'has_diff': bool(diff_text)})
+
+
+@app.route('/api/compliance/<hostname>/sync', methods=['POST'])
+@login_required
+def api_compliance_sync(hostname):
+    """Manual backup trigger for compliance page."""
+    device = inventory_mgr.get_device(hostname)
+    if not device:
+        return jsonify({'success': False, 'error': 'Device not found'}), 404
+
+    data = request.get_json() or {}
+    username = data.get('username', os.environ.get('DEFAULT_DEVICE_USERNAME', 'admin'))
+    password = data.get('password', os.environ.get('DEFAULT_DEVICE_PASSWORD', ''))
+
+    result = _do_device_backup(
+        hostname, device.ip_address,
+        device.management_type.value, device.gnmi_port,
+        username, password
+    )
+    return jsonify(result)
+
+
+# ==================== BGP Dashboard ====================
+
+@app.route('/bgp')
+@login_required
+def bgp_dashboard():
+    return render_template('bgp.html')
+
+
+@app.route('/api/bgp/summary')
+@login_required
+def api_bgp_summary():
+    """Return all BGP peers from cached telemetry."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT devices_json FROM telemetry_cache WHERE id=1")
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            return jsonify({'peers': [], 'from_cache': True, 'age': None})
+
+        devices_data = json.loads(row[0])
+        peers = []
+        for entry in devices_data:
+            hostname = entry.get('hostname', '')
+            bgp = entry.get('telemetry', {}).get('bgp', {})
+            for vrf_name, vrf_data in bgp.get('vrfs', {}).items():
+                for peer in vrf_data.get('peers', []):
+                    peers.append({
+                        'hostname': hostname,
+                        'vrf': vrf_name,
+                        'neighbor': peer.get('neighbor', ''),
+                        'asn': peer.get('asn', ''),
+                        'state': peer.get('state', ''),
+                        'prefixes_received': peer.get('prefixes_received', 0),
+                        'uptime': peer.get('uptime', 0),
+                    })
+
+        return jsonify({'peers': peers, 'from_cache': True})
+
+    except Exception as e:
+        app.logger.error(f"BGP summary error: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 # ==================== Main ====================
