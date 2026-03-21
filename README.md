@@ -454,6 +454,73 @@ Database migrations run automatically on startup — no manual schema changes ne
 
 ---
 
+## Karman-Link — Local Agent (Switch Ingest)
+
+Karman-Link bridges a factory-reset or unconfigured Arista switch to Kármán from an engineer's
+laptop, without needing the switch to be on the management network first.
+
+### How it works
+
+1. Cable your laptop's ethernet port to the switch's **Management0** port.
+2. Generate an API key in **Admin → Agent Keys**.
+3. Run the agent on your laptop:
+
+```bash
+cd karman-link
+pip install -r requirements.txt
+python karman_link.py --server https://karman.example.com --key <api_key>
+```
+
+4. The agent auto-discovers the switch at `192.168.0.1` (Arista factory default) and appears on
+   the **Ingest** page in Kármán.
+5. Choose a workflow in the UI:
+
+| Workflow | When to use |
+|----------|-------------|
+| **New Switch** | Factory-reset hardware. Agent connects as `admin` (no password) over HTTP and pushes management IP, eAPI, SSH, and optionally TerminAttr. |
+| **Adopt Existing** | Switch already has an IP and credentials. Agent connects with your creds and pushes only the missing Kármán integration config (eAPI / SSH / TerminAttr). |
+
+6. Once provisioning completes, run **Ingest** to collect `show version`, interfaces, LLDP,
+   running-config, environment, and BGP summary.
+7. Click **Add to Inventory** to register the device in Kármán with all discovered metadata
+   pre-filled.
+
+### CLI flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--server` | _(required)_ | Kármán server URL, e.g. `http://10.0.0.1:5000` |
+| `--key` | _(required)_ | API key from Admin → Agent Keys |
+| `--switch-ip` | auto (192.168.0.1) | Override switch discovery IP |
+| `--debug` | off | Verbose logging |
+
+### Testing in a lab (EVE-NG / GNS3)
+
+vEOS-lab nodes do not auto-start eAPI on `192.168.0.1` like physical hardware. To test the
+**New Switch** flow in a lab:
+
+- Run karman-link directly on the EVE-NG host — it has direct IP reachability to all nodes.
+- Use `--switch-ip <veos-mgmt-ip>` to skip factory-IP discovery.
+- Give the vEOS node a minimal startup config so eAPI HTTP is already listening when the agent connects:
+
+```
+management api http-commands
+   protocol http
+   no shutdown
+interface Management0
+   ip address 192.168.100.50/24
+ip route 0.0.0.0/0 192.168.100.1
+```
+
+The **Adopt Existing** workflow works against any running vEOS node with no special setup — just
+provide its IP and credentials in the UI.
+
+> **Note:** After the New Switch provisioning pushes a new management IP to a vEOS node, the
+> original IP remains reachable in EVE-NG (it's a VM). On real hardware the laptop cable comes out
+> and only the new IP is reachable — this difference is cosmetic for testing purposes.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

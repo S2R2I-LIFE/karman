@@ -271,16 +271,155 @@ class AgentManager:
     ]
 
     def queue_ingest(self, session_id: str, switch_ip: str,
-                     username: str = 'admin', password: str = '') -> List[str]:
+                     username: str = 'admin', password: str = '',
+                     port: int = 80, transport: str = 'http') -> List[str]:
         """Queue the full ingest command sequence. Returns list of command IDs."""
         ids = []
         for cmds in self.INGEST_SEQUENCE:
             cid = self.queue_command(session_id, 'execute', {
-                'protocol': 'eapi',
                 'host': switch_ip,
+                'port': port,
+                'transport': transport,
                 'username': username,
                 'password': password,
                 'commands': cmds,
             })
             ids.append(cid)
+        return ids
+
+    def queue_provision_new(self, session_id: str, switch_ip: str,
+                            mgmt_ip: str, prefix_len: str, gateway: str,
+                            new_password: str = '',
+                            vrf: str = 'default',
+                            enable_eapi: bool = True,
+                            enable_ssh: bool = True,
+                            enable_terminattr: bool = False,
+                            extra_config: str = '') -> List[str]:
+        """
+        Queue config-mode commands to bootstrap a factory-reset switch.
+        Connects using factory defaults (admin / no password / HTTP port 80).
+        Returns list of queued command IDs.
+        """
+        cmds = []
+
+        # Set admin password if requested
+        if new_password:
+            cmds.append(f'username admin privilege 15 secret 0 {new_password}')
+
+        # VRF instance (if non-default)
+        if vrf and vrf != 'default':
+            cmds.append(f'vrf instance {vrf}')
+
+        # Management interface
+        cmds.append('interface Management0')
+        if vrf and vrf != 'default':
+            cmds.append(f'   vrf {vrf}')
+        cmds.append(f'   ip address {mgmt_ip}/{prefix_len}')
+
+        # Default route
+        if vrf and vrf != 'default':
+            cmds.append(f'ip route vrf {vrf} 0.0.0.0/0 {gateway}')
+        else:
+            cmds.append(f'ip route 0.0.0.0/0 {gateway}')
+
+        # eAPI
+        if enable_eapi:
+            cmds += ['management api http-commands', '   protocol https', '   no shutdown']
+            if vrf and vrf != 'default':
+                cmds.append(f'   vrf {vrf}')
+
+        # SSH
+        if enable_ssh:
+            cmds += ['management ssh', '   idle-timeout 60', '   no shutdown']
+            if vrf and vrf != 'default':
+                cmds.append(f'   vrf {vrf}')
+
+        # TerminAttr
+        if enable_terminattr:
+            vrf_label = vrf if (vrf and vrf != 'default') else 'default'
+            cmds += [
+                'daemon TerminAttr',
+                f'   exec /usr/bin/TerminAttr -grpcaddr={vrf_label}/0.0.0.0:6030 -disableaaa',
+                '   no shutdown',
+            ]
+
+        # User-supplied extra lines
+        for line in (extra_config or '').strip().splitlines():
+            stripped = line.strip()
+            if stripped:
+                cmds.append(stripped)
+
+        ids = []
+        # Push configuration (factory creds, HTTP)
+        ids.append(self.queue_command(session_id, 'configure', {
+            'host': switch_ip,
+            'port': 80,
+            'transport': 'http',
+            'username': 'admin',
+            'password': '',
+            'commands': cmds,
+        }))
+        # Persist to startup-config
+        ids.append(self.queue_command(session_id, 'execute', {
+            'host': switch_ip,
+            'port': 80,
+            'transport': 'http',
+            'username': 'admin',
+            'password': '',
+            'commands': ['write memory'],
+        }))
+        return ids
+
+    def queue_adopt(self, session_id: str, switch_ip: str,
+                    username: str = 'admin', password: str = '',
+                    port: int = 443, transport: str = 'https',
+                    vrf: str = 'default',
+                    enable_eapi: bool = True,
+                    enable_ssh: bool = True,
+                    enable_terminattr: bool = False) -> List[str]:
+        """
+        Queue adoption config for a switch that is already on the network.
+        Pushes only what's needed for Kármán telemetry (eAPI / SSH / TerminAttr).
+        Returns list of queued command IDs.
+        """
+        cmds = []
+
+        if enable_eapi:
+            cmds += ['management api http-commands', '   protocol https', '   no shutdown']
+            if vrf and vrf != 'default':
+                cmds.append(f'   vrf {vrf}')
+
+        if enable_ssh:
+            cmds += ['management ssh', '   idle-timeout 60', '   no shutdown']
+            if vrf and vrf != 'default':
+                cmds.append(f'   vrf {vrf}')
+
+        if enable_terminattr:
+            vrf_label = vrf if (vrf and vrf != 'default') else 'default'
+            cmds += [
+                'daemon TerminAttr',
+                f'   exec /usr/bin/TerminAttr -grpcaddr={vrf_label}/0.0.0.0:6030 -disableaaa',
+                '   no shutdown',
+            ]
+
+        if not cmds:
+            return []
+
+        ids = []
+        ids.append(self.queue_command(session_id, 'configure', {
+            'host': switch_ip,
+            'port': port,
+            'transport': transport,
+            'username': username,
+            'password': password,
+            'commands': cmds,
+        }))
+        ids.append(self.queue_command(session_id, 'execute', {
+            'host': switch_ip,
+            'port': port,
+            'transport': transport,
+            'username': username,
+            'password': password,
+            'commands': ['write memory'],
+        }))
         return ids

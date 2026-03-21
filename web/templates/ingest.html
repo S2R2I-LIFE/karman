@@ -7,17 +7,49 @@
   <div class="col-12">
     <div class="d-flex justify-content-between align-items-start mb-4">
       <div>
-        <h1 class="mb-1">
+        <h1 class="mb-1 help-title" data-help-key="ingest" onclick="toggleHelpPanel('ingest')">
           <i class="bi bi-usb-plug"></i> Switch Ingest
+          <i class="bi bi-chevron-down ms-2 help-chev" id="help-chev-ingest"></i>
         </h1>
-        <p class="text-muted mb-0">
-          Run <code>karman-link</code> on a laptop cabled to a factory-reset switch, then start an
-          ingest here to collect its inventory data.
-        </p>
+        <div id="help-body-ingest" class="help-body-inline mt-2">
+          <div class="row g-3">
+            <div class="col-md-5">
+              <p class="text-muted"><strong>Switch Ingest</strong> bridges an unprovisioned or
+              factory-reset Arista switch to Kármán using the <code>karman-link</code> agent running
+              on a laptop directly cabled to the switch's Management0 port.</p>
+              <p class="text-muted">Run the agent on your laptop and it appears here automatically.
+              Choose a workflow — <strong>New Switch</strong> if it's factory-reset, or
+              <strong>Adopt Existing</strong> if it's already configured and reachable. Both flows
+              push the EOS configuration Kármán needs, then add the device to your inventory.</p>
+            </div>
+            <div class="col-md-7">
+              <div class="row g-2">
+                <div class="col-6">
+                  <div class="help-tip"><i class="bi bi-usb-plug text-primary"></i><span><strong>karman-link</strong> — run <code>python karman_link.py --server &lt;url&gt; --key &lt;key&gt;</code> on your laptop. It auto-discovers the switch at 192.168.0.1.</span></div>
+                  <div class="help-tip"><i class="bi bi-star text-warning"></i><span><strong>New Switch</strong> — factory-reset switch cabled directly to your laptop. Kármán logs in as <code>admin</code> (no password) and configures management IP, eAPI, SSH, and optionally TerminAttr.</span></div>
+                  <div class="help-tip"><i class="bi bi-arrow-repeat text-info"></i><span><strong>Adopt Existing</strong> — switch is already on your network. Provide credentials and Kármán pushes only the missing eAPI / SSH / TerminAttr config needed for telemetry.</span></div>
+                </div>
+                <div class="col-6">
+                  <div class="help-tip"><i class="bi bi-cloud-download text-success"></i><span><strong>Ingest</strong> — collects <code>show version</code>, interfaces, LLDP, running-config, environment, and BGP from the switch for inventory enrichment.</span></div>
+                  <div class="help-tip"><i class="bi bi-plus-circle text-success"></i><span><strong>Add to Inventory</strong> — after provisioning and ingest, add the switch to Kármán's device list with one click. Pre-fills hostname, IP, model, and serial automatically.</span></div>
+                  <div class="help-tip"><i class="bi bi-key text-secondary"></i><span><strong>API Keys</strong> — generate keys in <a href="{{ url_for('admin_agent_keys') }}">Admin → Agent Keys</a>. Each key authorises one agent to connect. Revoke keys that are no longer in use.</span></div>
+                  <div class="help-tip"><i class="bi bi-cpu text-secondary"></i><span><strong>Lab / EVE-NG</strong> — run karman-link on the EVE-NG host directly. Use <code>--switch-ip</code> to target any vEOS node. For the New Switch flow the node needs eAPI HTTP already listening — add this minimal startup config:
+                    <pre class="mt-1 mb-0 bg-body-secondary rounded px-2 py-1" style="font-size:0.78rem;">management api http-commands
+   protocol http
+   no shutdown
+interface Management0
+   ip address 192.168.100.50/24
+ip route 0.0.0.0/0 192.168.100.1</pre>
+                  </span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="d-flex gap-2 flex-shrink-0 ms-3">
         <a href="{{ url_for('admin_agent_keys') }}" class="btn btn-outline-secondary">
-          <i class="bi bi-key"></i> Manage API Keys
+          <i class="bi bi-key"></i> API Keys
         </a>
         <button class="btn btn-outline-primary" onclick="loadSessions()">
           <i class="bi bi-arrow-clockwise"></i> Refresh
@@ -27,76 +59,360 @@
   </div>
 </div>
 
-<!-- How-to banner -->
-<div class="alert alert-info alert-dismissible fade show mb-4" role="alert">
-  <div class="d-flex gap-3 align-items-start">
-    <i class="bi bi-info-circle-fill fs-5 mt-1"></i>
-    <div>
-      <strong>How to use karman-link</strong>
-      <ol class="mb-0 mt-1">
-        <li>Generate an API key on the <a href="{{ url_for('admin_agent_keys') }}" class="alert-link">Agent Keys</a> page.</li>
-        <li>Cable your laptop's ethernet to the switch's Management0 port.</li>
-        <li>Run: <code>python karman_link.py --server {{ request.host_url.rstrip('/') }} --key &lt;api_key&gt;</code></li>
-        <li>The agent appears below once connected. Click <strong>Start Ingest</strong> to collect data.</li>
-      </ol>
-    </div>
-  </div>
-  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-</div>
-
 <!-- Session list -->
 <div id="sessions-container">
   <div class="text-center py-5 text-muted" id="no-sessions">
     <i class="bi bi-wifi-off fs-1 d-block mb-3"></i>
-    <p class="mb-1">No active karman-link agents connected.</p>
-    <small>Agents connect automatically when <code>karman_link.py</code> is running on a laptop.</small>
+    <p class="mb-1 fw-semibold">No active karman-link agents connected.</p>
+    <small>Start the agent on a laptop cabled to the switch:</small>
+    <pre class="d-inline-block mt-2 text-start bg-body-secondary rounded px-3 py-2 small">python karman_link.py --server {{ request.host_url.rstrip('/') }} --key &lt;api_key&gt;</pre>
   </div>
 </div>
 
-<!-- ── Ingest Modal ── -->
+
+<!-- ═══════════════════════════════════════════════════════
+     SETUP WIZARD MODAL (New Switch / Adopt Existing)
+═══════════════════════════════════════════════════════ -->
+<div class="modal fade" id="setupModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+
+      <!-- Step 1: choose workflow -->
+      <div id="setup-step1">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-usb-plug"></i> Set Up Switch</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="setup-session-id">
+          <p class="text-muted mb-4">Choose how you want to connect to this switch:</p>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <div class="card h-100 border-primary workflow-card" onclick="selectWorkflow('new')"
+                   style="cursor:pointer;" id="wf-new">
+                <div class="card-body text-center py-4">
+                  <i class="bi bi-star fs-1 text-warning d-block mb-3"></i>
+                  <h5 class="card-title">New Switch</h5>
+                  <p class="card-text text-muted small">Factory-reset Arista switch cabled directly
+                  to your laptop. Kármán logs in as <code>admin</code> (no password) via
+                  192.168.0.1 and provisions management IP, eAPI, SSH, and optionally
+                  TerminAttr.</p>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="card h-100 workflow-card" onclick="selectWorkflow('adopt')"
+                   style="cursor:pointer;" id="wf-adopt">
+                <div class="card-body text-center py-4">
+                  <i class="bi bi-arrow-repeat fs-1 text-info d-block mb-3"></i>
+                  <h5 class="card-title">Adopt Existing</h5>
+                  <p class="card-text text-muted small">Switch is already on the network with an
+                  IP address. Provide credentials and Kármán pushes the eAPI / SSH / TerminAttr
+                  configuration needed for telemetry collection, then adds it to inventory.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn btn-primary" id="step1-next" disabled onclick="goStep2()">
+            Next <i class="bi bi-arrow-right"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 2a: New switch form -->
+      <div id="setup-step2-new" style="display:none;">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-star text-warning"></i> New Switch — Provision</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small mb-3">
+            The agent will connect to the switch at <strong>192.168.0.1:80</strong> using the
+            default Arista credentials (<code>admin</code> / no password) and push the config below.
+          </p>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">New Management IP <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="new-mgmt-ip" placeholder="10.0.0.100">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Prefix Length</label>
+              <input type="number" class="form-control" id="new-prefix" value="24" min="1" max="32">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">VRF</label>
+              <select class="form-select" id="new-vrf">
+                <option value="default">default</option>
+                <option value="management">management</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Default Gateway <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="new-gateway" placeholder="10.0.0.1">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Set Admin Password</label>
+              <input type="password" class="form-control" id="new-password"
+                     placeholder="(leave blank to keep empty)">
+              <div class="form-text">Sets the <code>admin</code> user password on the switch.</div>
+            </div>
+          </div>
+          <hr class="my-3">
+          <p class="fw-semibold mb-2">Services to enable</p>
+          <div class="row g-2 mb-3">
+            <div class="col-auto">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="new-eapi" checked>
+                <label class="form-check-label" for="new-eapi">
+                  <i class="bi bi-hdd-network text-primary"></i> eAPI (HTTPS) — <em>required for Kármán</em>
+                </label>
+              </div>
+            </div>
+            <div class="col-auto">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="new-ssh" checked>
+                <label class="form-check-label" for="new-ssh">
+                  <i class="bi bi-terminal text-success"></i> SSH
+                </label>
+              </div>
+            </div>
+            <div class="col-auto">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="new-terminattr">
+                <label class="form-check-label" for="new-terminattr">
+                  <i class="bi bi-graph-up text-warning"></i> TerminAttr / gNMI — <em>enables Metrics tab</em>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">
+              Additional Config Lines
+              <small class="text-muted">(optional — appended to the provisioning block)</small>
+            </label>
+            <textarea class="form-control font-monospace" id="new-extra" rows="4"
+                      placeholder="hostname my-switch&#10;ip name-server vrf default 8.8.8.8&#10;ntp server pool.ntp.org"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="backToStep1()">
+            <i class="bi bi-arrow-left"></i> Back
+          </button>
+          <button class="btn btn-warning" onclick="submitProvisionNew()">
+            <i class="bi bi-lightning-charge"></i> Provision Switch
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 2b: Adopt existing form -->
+      <div id="setup-step2-adopt" style="display:none;">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-arrow-repeat text-info"></i> Adopt Existing Switch</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small mb-3">
+            Enter the switch's existing management credentials. The agent will connect over
+            SSH or eAPI and push only the missing Kármán integration config.
+          </p>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">Switch IP <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="adopt-ip" placeholder="10.0.0.100">
+              <div class="form-text">IP reachable from the agent laptop.</div>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Protocol</label>
+              <select class="form-select" id="adopt-transport" onchange="syncAdoptPort()">
+                <option value="https">HTTPS (443)</option>
+                <option value="http">HTTP (80)</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Port</label>
+              <input type="number" class="form-control" id="adopt-port" value="443">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Username</label>
+              <input type="text" class="form-control" id="adopt-username" value="admin">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Password</label>
+              <input type="password" class="form-control" id="adopt-password" placeholder="">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">VRF</label>
+              <select class="form-select" id="adopt-vrf">
+                <option value="default">default</option>
+                <option value="management">management</option>
+              </select>
+            </div>
+          </div>
+          <hr class="my-3">
+          <p class="fw-semibold mb-2">Push missing Kármán integration config</p>
+          <div class="row g-2">
+            <div class="col-auto">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="adopt-eapi" checked>
+                <label class="form-check-label" for="adopt-eapi">
+                  <i class="bi bi-hdd-network text-primary"></i> eAPI (HTTPS)
+                </label>
+              </div>
+            </div>
+            <div class="col-auto">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="adopt-ssh" checked>
+                <label class="form-check-label" for="adopt-ssh">
+                  <i class="bi bi-terminal text-success"></i> SSH
+                </label>
+              </div>
+            </div>
+            <div class="col-auto">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="adopt-terminattr">
+                <label class="form-check-label" for="adopt-terminattr">
+                  <i class="bi bi-graph-up text-warning"></i> TerminAttr / gNMI
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="backToStep1()">
+            <i class="bi bi-arrow-left"></i> Back
+          </button>
+          <button class="btn btn-info text-white" onclick="submitAdopt()">
+            <i class="bi bi-arrow-repeat"></i> Adopt Switch
+          </button>
+        </div>
+      </div>
+
+    </div><!-- /.modal-content -->
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════
+     INGEST MODAL
+═══════════════════════════════════════════════════════ -->
 <div class="modal fade" id="ingestModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-play-circle"></i> Start Ingest</h5>
+        <h5 class="modal-title"><i class="bi bi-cloud-download"></i> Run Ingest</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <p class="text-muted mb-3">
-          These credentials will be used to authenticate to the switch during ingest.
-          Leave blank to use the defaults discovered by the agent.
-        </p>
+        <p class="text-muted mb-3">Credentials used to collect show-command data from the switch.</p>
         <input type="hidden" id="ingest-session-id">
         <div class="mb-3">
-          <label class="form-label">Username</label>
-          <input type="text" class="form-control" id="ingest-username" value="admin">
+          <label class="form-label">Switch IP</label>
+          <input type="text" class="form-control" id="ingest-host"
+                 placeholder="auto (from session)">
+          <div class="form-text">Leave blank to use the session's discovered IP. Override
+          if the switch now has a different management IP after provisioning.</div>
         </div>
-        <div class="mb-3">
-          <label class="form-label">Password</label>
-          <input type="password" class="form-control" id="ingest-password" placeholder="(blank for empty password)">
+        <div class="row g-2 mb-3">
+          <div class="col">
+            <label class="form-label">Username</label>
+            <input type="text" class="form-control" id="ingest-username" value="admin">
+          </div>
+          <div class="col">
+            <label class="form-label">Password</label>
+            <input type="password" class="form-control" id="ingest-password">
+          </div>
+        </div>
+        <div class="row g-2">
+          <div class="col">
+            <label class="form-label">Protocol</label>
+            <select class="form-select" id="ingest-transport" onchange="syncIngestPort()">
+              <option value="http">HTTP (80)</option>
+              <option value="https" selected>HTTPS (443)</option>
+            </select>
+          </div>
+          <div class="col">
+            <label class="form-label">Port</label>
+            <input type="number" class="form-control" id="ingest-port" value="443">
+          </div>
         </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-primary" onclick="startIngest()">
-          <i class="bi bi-play-circle"></i> Start Ingest
+        <button type="button" class="btn btn-success" onclick="startIngest()">
+          <i class="bi bi-cloud-download"></i> Start Ingest
         </button>
       </div>
     </div>
   </div>
 </div>
 
+
+<!-- ═══════════════════════════════════════════════════════
+     ADD TO INVENTORY MODAL
+═══════════════════════════════════════════════════════ -->
+<div class="modal fade" id="inventoryModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-plus-circle text-success"></i> Add to Inventory</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted mb-3">Confirm details before adding this switch to Kármán's device inventory.</p>
+        <input type="hidden" id="inv-session-id">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">Hostname <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="inv-hostname">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Management IP <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="inv-ip">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Management Type</label>
+            <select class="form-select" id="inv-mgmt-type">
+              <option value="eapi">eAPI (HTTPS)</option>
+              <option value="ssh">SSH</option>
+              <option value="gnmi">gNMI / TerminAttr</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Site</label>
+            <input type="text" class="form-control" id="inv-site" placeholder="(optional)">
+          </div>
+          <div class="col-12">
+            <div class="bg-body-secondary rounded p-2 small text-muted" id="inv-details">
+              Model, serial, EOS version will be pre-filled from ingest data.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-success" onclick="submitAddToInventory()">
+          <i class="bi bi-plus-circle"></i> Add Device
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
 <script>
 // ── state ──────────────────────────────────────────────────────────────────
-const activeSessions = {};   // session_id → {timer, element}
-let pollTimer = null;
+const activeSessions  = {};   // session_id → { progressTimer }
+let   selectedWorkflow = null;
 
 // ── session list polling ───────────────────────────────────────────────────
 function loadSessions() {
   fetch('/api/agent/sessions?active=false')
     .then(r => r.json())
     .then(sessions => {
-      const container = document.getElementById('sessions-container');
+      const container  = document.getElementById('sessions-container');
       const noSessions = document.getElementById('no-sessions');
 
       if (!sessions.length) {
@@ -105,101 +421,110 @@ function loadSessions() {
         noSessions.style.display = '';
         return;
       }
-
       noSessions.style.display = 'none';
 
-      // Build set of current session IDs
       const currentIds = new Set(sessions.map(s => s.session_id));
-
-      // Remove cards for gone sessions
       for (const id of Object.keys(activeSessions)) {
         if (!currentIds.has(id)) {
-          const el = document.getElementById(`session-${id}`);
-          if (el) el.remove();
+          document.getElementById(`session-${id}`)?.remove();
           clearInterval(activeSessions[id].progressTimer);
           delete activeSessions[id];
         }
       }
-
-      // Add or update cards
-      for (const s of sessions) {
-        upsertSessionCard(container, s);
-      }
+      for (const s of sessions) upsertSessionCard(container, s);
     })
     .catch(e => console.warn('Session load error:', e));
 }
 
 function upsertSessionCard(container, s) {
-  const id = s.session_id;
-  let card = document.getElementById(`session-${id}`);
+  const id     = s.session_id;
+  let   card   = document.getElementById(`session-${id}`);
+  const isNew  = !card;
 
-  if (!card) {
+  if (isNew) {
     card = document.createElement('div');
     card.id = `session-${id}`;
-    card.className = 'card mb-3 session-card';
+    card.className = 'card mb-3';
     container.insertBefore(card, container.firstChild);
     activeSessions[id] = {};
   }
 
-  const status     = s.status || 'connected';
-  const statusBadge = statusBadgeHtml(status);
-  const ago         = s.last_heartbeat ? timeAgo(s.last_heartbeat) : '—';
-  const switchIp    = s.switch_ip || '—';
-  const model       = s.switch_model || '—';
-  const serial      = s.switch_serial || '—';
-  const eos         = s.switch_eos || '—';
-  const hostname    = s.switch_hostname || '—';
+  const status    = s.status || 'connected';
+  const switchIp  = s.switch_ip    || '—';
+  const model     = s.switch_model || '—';
+  const serial    = s.switch_serial || '—';
+  const eos       = s.switch_eos   || '—';
+  const hostname  = s.switch_hostname || '';
+  const ago       = s.last_heartbeat ? timeAgo(s.last_heartbeat) : '—';
 
-  const canIngest = s.switch_ip && !['ingesting', 'disconnected'].includes(status);
-  const ingestBtn = canIngest
-    ? `<button class="btn btn-success btn-sm" onclick="openIngestModal('${id}')">
-         <i class="bi bi-play-circle"></i> Start Ingest
-       </button>`
-    : '';
+  // ── action buttons ─────────────────────────────────────────────────────
+  const canSetup    = s.switch_ip && ['ready', 'provision_failed'].includes(status);
+  const canIngest   = s.switch_ip && ['ready', 'provision_complete', 'ingest_failed',
+                                       'adopted'].includes(status);
+  const canAdopt    = ['ingest_complete', 'ingest_failed', 'provision_complete'].includes(status);
+  const wasAdopted  = status === 'adopted';
+
+  let actions = '';
+  if (canSetup) {
+    actions += `<button class="btn btn-warning btn-sm" onclick="openSetupModal('${id}')">
+                  <i class="bi bi-lightning-charge"></i> Set Up Switch
+                </button>`;
+  }
+  if (canIngest) {
+    actions += `<button class="btn btn-success btn-sm" onclick="openIngestModal('${id}', '${s.switch_ip || ''}')">
+                  <i class="bi bi-cloud-download"></i> Ingest
+                </button>`;
+  }
+  if (canAdopt) {
+    actions += `<button class="btn btn-primary btn-sm" onclick="openInventoryModal('${id}')">
+                  <i class="bi bi-plus-circle"></i> Add to Inventory
+                </button>`;
+  }
+  if (wasAdopted && hostname) {
+    actions += `<a class="btn btn-outline-success btn-sm" href="/devices/${encodeURIComponent(hostname)}">
+                  <i class="bi bi-hdd-network"></i> View Device
+                </a>`;
+  }
+  if (['connected', 'no_switch'].includes(status) && s.switch_ip) {
+    // Switch found but no setup yet — still offer setup
+    actions += `<button class="btn btn-outline-secondary btn-sm" onclick="openSetupModal('${id}')">
+                  <i class="bi bi-lightning-charge"></i> Set Up Switch
+                </button>`;
+  }
 
   card.innerHTML = `
     <div class="card-header d-flex justify-content-between align-items-center">
-      <div class="d-flex align-items-center gap-2">
+      <div class="d-flex align-items-center gap-2 flex-wrap">
         <i class="bi bi-laptop"></i>
-        <strong>${hostname !== '—' ? hostname : 'Switch'}</strong>
-        <span class="text-muted small">(${switchIp})</span>
-        ${statusBadge}
+        <strong>${hostname || 'Switch'}</strong>
+        <span class="text-muted small">${switchIp !== '—' ? '(' + switchIp + ')' : ''}</span>
+        ${statusBadgeHtml(status)}
       </div>
-      <div class="d-flex align-items-center gap-2">
+      <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
         <small class="text-muted">Heartbeat: ${ago}</small>
-        ${ingestBtn}
+        ${actions}
       </div>
     </div>
     <div class="card-body py-2">
       <div class="row g-3 mb-2">
-        <div class="col-sm-3">
-          <small class="text-muted d-block">Model</small>
-          <span>${model}</span>
-        </div>
-        <div class="col-sm-3">
-          <small class="text-muted d-block">EOS Version</small>
-          <span>${eos}</span>
-        </div>
-        <div class="col-sm-3">
-          <small class="text-muted d-block">Serial</small>
-          <span>${serial}</span>
-        </div>
-        <div class="col-sm-3">
-          <small class="text-muted d-block">Session</small>
-          <span class="font-monospace small">${id.slice(0, 8)}…</span>
-        </div>
+        <div class="col-sm-3"><small class="text-muted d-block">Model</small><span>${model}</span></div>
+        <div class="col-sm-3"><small class="text-muted d-block">EOS Version</small><span>${eos}</span></div>
+        <div class="col-sm-3"><small class="text-muted d-block">Serial</small><span>${serial}</span></div>
+        <div class="col-sm-3"><small class="text-muted d-block">Session</small>
+          <span class="font-monospace small">${id.slice(0,8)}…</span></div>
       </div>
       <div id="progress-${id}"></div>
     </div>
   `;
 
-  // Start progress polling if ingesting
-  if (status === 'ingesting' && !activeSessions[id].progressTimer) {
+  // Auto-start progress polling when in an active phase
+  const needsProgress = ['provisioning', 'ingesting',
+                         'provision_complete', 'provision_failed',
+                         'ingest_complete', 'ingest_failed'].includes(status);
+  if (needsProgress && !activeSessions[id].progressTimer) {
     activeSessions[id].progressTimer = setInterval(() => pollProgress(id), 2000);
     pollProgress(id);
-  } else if (status === 'ingesting') {
-    pollProgress(id);
-  } else if (status === 'ingest_complete' || status === 'ingest_failed') {
+  } else if (needsProgress) {
     pollProgress(id);
   }
 }
@@ -210,18 +535,22 @@ function pollProgress(sessionId) {
     .then(r => r.json())
     .then(data => {
       renderProgress(sessionId, data);
-      const s = data.session || {};
-      const done = ['ingest_complete', 'ingest_failed', 'disconnected'].includes(s.status);
-      if (done && activeSessions[sessionId] && activeSessions[sessionId].progressTimer) {
+      const st   = (data.session || {}).status || '';
+      const done = ['provision_complete', 'provision_failed',
+                    'ingest_complete',    'ingest_failed',
+                    'adopted',            'disconnected'].includes(st);
+      if (done && activeSessions[sessionId]?.progressTimer) {
         clearInterval(activeSessions[sessionId].progressTimer);
         activeSessions[sessionId].progressTimer = null;
+        // Reload the card to show the right action buttons
+        loadSessions();
       }
     })
     .catch(e => console.warn('Progress error:', e));
 }
 
 function renderProgress(sessionId, data) {
-  const el = document.getElementById(`progress-${sessionId}`);
+  const el       = document.getElementById(`progress-${sessionId}`);
   if (!el) return;
   const commands = data.commands || [];
   if (!commands.length) { el.innerHTML = ''; return; }
@@ -230,65 +559,115 @@ function renderProgress(sessionId, data) {
   const completed = commands.filter(c => c.completed_at).length;
   const failed    = commands.filter(c => c.completed_at && c.success === 0).length;
   const pct       = Math.round(completed / total * 100);
+  const barColor  = failed ? 'bg-danger' : (completed === total ? 'bg-success' : 'bg-primary progress-bar-striped progress-bar-animated');
 
-  const barColor = failed ? 'bg-danger' : (completed === total ? 'bg-success' : 'bg-primary');
-
-  let rows = commands.map(c => {
-    const payload = c.payload ? JSON.parse(c.payload) : {};
-    const cmds    = (payload.commands || []).join(', ');
+  const rows = commands.map(c => {
+    const payload = c.payload ? tryParse(c.payload) : {};
+    const label   = c.action === 'configure'
+      ? `configure (${(payload.commands || []).length} lines)`
+      : (payload.commands || []).join(', ');
     let icon, cls;
-    if (c.completed_at && c.success) { icon = 'check-circle-fill'; cls = 'text-success'; }
-    else if (c.completed_at && !c.success) { icon = 'x-circle-fill'; cls = 'text-danger'; }
-    else if (c.claimed_at) { icon = 'arrow-repeat'; cls = 'text-primary'; }
-    else { icon = 'clock'; cls = 'text-muted'; }
+    if (c.completed_at && c.success)        { icon = 'check-circle-fill'; cls = 'text-success'; }
+    else if (c.completed_at && !c.success)  { icon = 'x-circle-fill';     cls = 'text-danger';  }
+    else if (c.claimed_at)                  { icon = 'arrow-repeat';       cls = 'text-primary'; }
+    else                                    { icon = 'clock';              cls = 'text-muted';   }
     return `<tr>
       <td><i class="bi bi-${icon} ${cls}"></i></td>
-      <td class="font-monospace small">${escHtml(cmds)}</td>
+      <td class="font-monospace small">${escHtml(label)}</td>
       <td class="text-muted small">${c.completed_at ? 'Done' : (c.claimed_at ? 'Running…' : 'Queued')}</td>
     </tr>`;
   }).join('');
 
+  const allDone   = completed === total;
+  const st        = (data.session || {}).status || '';
+  const isProvision = st.startsWith('provision') || commands.some(c => tryParse(c.payload || '{}').commands?.length > 2);
+  const phaseLabel = isProvision ? 'Provision' : 'Ingest';
+  const resultMsg  = allDone
+    ? `<div class="mt-2 text-${failed ? 'danger' : 'success'} small">
+         <i class="bi bi-${failed ? 'x-circle' : 'check-circle'}-fill"></i>
+         ${phaseLabel} ${failed ? 'completed with errors' : 'complete'} — ${completed}/${total} commands.
+       </div>` : '';
+
   el.innerHTML = `
-    <div class="progress mb-2" style="height:6px;">
+    <div class="progress mb-2" style="height:5px;">
       <div class="progress-bar ${barColor}" style="width:${pct}%"></div>
     </div>
     <table class="table table-sm table-borderless mb-0" style="font-size:0.82rem;">
       <tbody>${rows}</tbody>
     </table>
-    ${completed === total
-      ? `<div class="mt-2 text-${failed ? 'danger' : 'success'}">
-           <i class="bi bi-${failed ? 'x-circle' : 'check-circle'}-fill"></i>
-           Ingest ${failed ? 'completed with errors' : 'complete'} — ${completed}/${total} commands.
-         </div>`
-      : ''}
+    ${resultMsg}
   `;
 }
 
-// ── ingest modal ────────────────────────────────────────────────────────────
-function openIngestModal(sessionId) {
-  document.getElementById('ingest-session-id').value = sessionId;
-  document.getElementById('ingest-password').value = '';
-  new bootstrap.Modal(document.getElementById('ingestModal')).show();
+// ── Setup wizard ─────────────────────────────────────────────────────────────
+function openSetupModal(sessionId) {
+  document.getElementById('setup-session-id').value = sessionId;
+  selectedWorkflow = null;
+  document.getElementById('step1-next').disabled = true;
+  document.getElementById('wf-new').classList.remove('border-primary', 'border-info');
+  document.getElementById('wf-adopt').classList.remove('border-primary', 'border-info');
+  showSetupPane('setup-step1');
+  new bootstrap.Modal(document.getElementById('setupModal')).show();
 }
 
-function startIngest() {
-  const sessionId = document.getElementById('ingest-session-id').value;
-  const username  = document.getElementById('ingest-username').value || 'admin';
-  const password  = document.getElementById('ingest-password').value || '';
+function selectWorkflow(wf) {
+  selectedWorkflow = wf;
+  document.getElementById('step1-next').disabled = false;
+  document.getElementById('wf-new').classList.toggle('border-primary', wf === 'new');
+  document.getElementById('wf-new').classList.toggle('border-info',    false);
+  document.getElementById('wf-adopt').classList.toggle('border-info',    wf === 'adopt');
+  document.getElementById('wf-adopt').classList.toggle('border-primary', false);
+}
 
-  bootstrap.Modal.getInstance(document.getElementById('ingestModal')).hide();
+function goStep2() {
+  if (!selectedWorkflow) return;
+  showSetupPane(selectedWorkflow === 'new' ? 'setup-step2-new' : 'setup-step2-adopt');
+}
 
-  fetch(`/api/agent/sessions/${sessionId}/ingest`, {
+function backToStep1() {
+  showSetupPane('setup-step1');
+}
+
+function showSetupPane(id) {
+  ['setup-step1', 'setup-step2-new', 'setup-step2-adopt'].forEach(p => {
+    document.getElementById(p).style.display = p === id ? '' : 'none';
+  });
+}
+
+function submitProvisionNew() {
+  const sessionId = document.getElementById('setup-session-id').value;
+  const mgmtIp    = document.getElementById('new-mgmt-ip').value.trim();
+  const prefix    = document.getElementById('new-prefix').value.trim() || '24';
+  const gateway   = document.getElementById('new-gateway').value.trim();
+
+  if (!mgmtIp || !gateway) {
+    alert('Management IP and Default Gateway are required.');
+    return;
+  }
+
+  const body = {
+    mgmt_ip:          mgmtIp,
+    prefix_len:       prefix,
+    gateway:          gateway,
+    new_password:     document.getElementById('new-password').value,
+    vrf:              document.getElementById('new-vrf').value,
+    enable_eapi:      document.getElementById('new-eapi').checked,
+    enable_ssh:       document.getElementById('new-ssh').checked,
+    enable_terminattr:document.getElementById('new-terminattr').checked,
+    extra_config:     document.getElementById('new-extra').value,
+  };
+
+  bootstrap.Modal.getInstance(document.getElementById('setupModal')).hide();
+
+  fetch(`/api/agent/sessions/${sessionId}/provision-new`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify(body),
   })
   .then(r => r.json())
-  .then(data => {
-    if (data.error) { alert('Error: ' + data.error); return; }
-    // Reload sessions to pick up new status
-    setTimeout(loadSessions, 500);
-    // Start progress polling for this session
+  .then(d => {
+    if (d.error) { alert('Error: ' + d.error); return; }
+    setTimeout(loadSessions, 400);
     if (activeSessions[sessionId]) {
       activeSessions[sessionId].progressTimer =
         setInterval(() => pollProgress(sessionId), 2000);
@@ -298,17 +677,164 @@ function startIngest() {
   .catch(e => alert('Request failed: ' + e));
 }
 
-// ── helpers ─────────────────────────────────────────────────────────────────
+function submitAdopt() {
+  const sessionId  = document.getElementById('setup-session-id').value;
+  const switchIp   = document.getElementById('adopt-ip').value.trim();
+  if (!switchIp) { alert('Switch IP is required.'); return; }
+
+  const body = {
+    switch_ip:        switchIp,
+    username:         document.getElementById('adopt-username').value,
+    password:         document.getElementById('adopt-password').value,
+    transport:        document.getElementById('adopt-transport').value,
+    port:             parseInt(document.getElementById('adopt-port').value),
+    vrf:              document.getElementById('adopt-vrf').value,
+    enable_eapi:      document.getElementById('adopt-eapi').checked,
+    enable_ssh:       document.getElementById('adopt-ssh').checked,
+    enable_terminattr:document.getElementById('adopt-terminattr').checked,
+  };
+
+  bootstrap.Modal.getInstance(document.getElementById('setupModal')).hide();
+
+  fetch(`/api/agent/sessions/${sessionId}/adopt`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.error) { alert('Error: ' + d.error); return; }
+    setTimeout(loadSessions, 400);
+    if (activeSessions[sessionId]) {
+      activeSessions[sessionId].progressTimer =
+        setInterval(() => pollProgress(sessionId), 2000);
+      pollProgress(sessionId);
+    }
+  })
+  .catch(e => alert('Request failed: ' + e));
+}
+
+// ── Ingest modal ─────────────────────────────────────────────────────────────
+function openIngestModal(sessionId, switchIp) {
+  document.getElementById('ingest-session-id').value = sessionId;
+  document.getElementById('ingest-host').value       = switchIp || '';
+  document.getElementById('ingest-password').value   = '';
+  new bootstrap.Modal(document.getElementById('ingestModal')).show();
+}
+
+function syncIngestPort() {
+  const t = document.getElementById('ingest-transport').value;
+  document.getElementById('ingest-port').value = t === 'https' ? 443 : 80;
+}
+
+function startIngest() {
+  const sessionId = document.getElementById('ingest-session-id').value;
+  const host      = document.getElementById('ingest-host').value.trim();
+
+  bootstrap.Modal.getInstance(document.getElementById('ingestModal')).hide();
+
+  fetch(`/api/agent/sessions/${sessionId}/ingest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username:  document.getElementById('ingest-username').value || 'admin',
+      password:  document.getElementById('ingest-password').value || '',
+      host:      host || undefined,
+      port:      parseInt(document.getElementById('ingest-port').value),
+      transport: document.getElementById('ingest-transport').value,
+    }),
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.error) { alert('Error: ' + d.error); return; }
+    setTimeout(loadSessions, 400);
+    if (activeSessions[sessionId]) {
+      activeSessions[sessionId].progressTimer =
+        setInterval(() => pollProgress(sessionId), 2000);
+      pollProgress(sessionId);
+    }
+  })
+  .catch(e => alert('Request failed: ' + e));
+}
+
+// ── Add to inventory modal ────────────────────────────────────────────────────
+function openInventoryModal(sessionId) {
+  document.getElementById('inv-session-id').value = sessionId;
+
+  // Pre-fill from session data via progress endpoint
+  fetch(`/api/agent/sessions/${sessionId}/progress`)
+    .then(r => r.json())
+    .then(data => {
+      const s = data.session || {};
+      document.getElementById('inv-hostname').value = s.switch_hostname || '';
+      document.getElementById('inv-ip').value       = s.switch_ip       || '';
+      document.getElementById('inv-site').value     = '';
+      document.getElementById('inv-details').innerHTML =
+        `Model: <strong>${s.switch_model || '—'}</strong> &nbsp;|&nbsp; ` +
+        `Serial: <strong>${s.switch_serial || '—'}</strong> &nbsp;|&nbsp; ` +
+        `EOS: <strong>${s.switch_eos || '—'}</strong>`;
+    });
+
+  new bootstrap.Modal(document.getElementById('inventoryModal')).show();
+}
+
+function submitAddToInventory() {
+  const sessionId = document.getElementById('inv-session-id').value;
+  const hostname  = document.getElementById('inv-hostname').value.trim();
+  const ip        = document.getElementById('inv-ip').value.trim();
+
+  if (!hostname || !ip) {
+    alert('Hostname and IP are required.');
+    return;
+  }
+
+  fetch(`/api/agent/sessions/${sessionId}/add-to-inventory`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      hostname:        hostname,
+      ip:              ip,
+      management_type: document.getElementById('inv-mgmt-type').value,
+      site:            document.getElementById('inv-site').value.trim(),
+    }),
+  })
+  .then(r => r.json())
+  .then(d => {
+    bootstrap.Modal.getInstance(document.getElementById('inventoryModal')).hide();
+    if (d.error) { alert('Error: ' + d.error); return; }
+    loadSessions();
+    // Brief banner
+    const flash = document.createElement('div');
+    flash.className = 'alert alert-success alert-dismissible fade show mt-3';
+    flash.innerHTML = `<i class="bi bi-check-circle-fill"></i> <strong>${escHtml(hostname)}</strong>
+      added to inventory. <a href="/devices/${encodeURIComponent(hostname)}" class="alert-link">View device →</a>
+      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+    document.querySelector('main').prepend(flash);
+    setTimeout(() => flash.remove(), 8000);
+  })
+  .catch(e => alert('Request failed: ' + e));
+}
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+function syncAdoptPort() {
+  const t = document.getElementById('adopt-transport').value;
+  document.getElementById('adopt-port').value = t === 'https' ? 443 : 80;
+}
+
 function statusBadgeHtml(status) {
   const map = {
-    connected:       ['secondary', 'Connected'],
-    ready:           ['info',      'Switch Ready'],
-    ingesting:       ['primary',   'Ingesting…'],
-    ingest_complete: ['success',   'Ingest Complete'],
-    ingest_failed:   ['danger',    'Ingest Failed'],
-    no_switch:       ['warning',   'No Switch Found'],
-    disconnected:    ['dark',      'Disconnected'],
-    error:           ['danger',    'Error'],
+    connected:         ['secondary', 'Connected'],
+    ready:             ['info',      'Switch Ready'],
+    no_switch:         ['warning',   'No Switch Found'],
+    provisioning:      ['primary',   'Provisioning…'],
+    provision_complete:['success',   'Provisioned'],
+    provision_failed:  ['danger',    'Provision Failed'],
+    ingesting:         ['primary',   'Ingesting…'],
+    ingest_complete:   ['success',   'Ingest Complete'],
+    ingest_failed:     ['danger',    'Ingest Failed'],
+    adopted:           ['success',   'In Inventory'],
+    disconnected:      ['dark',      'Disconnected'],
+    error:             ['danger',    'Error'],
   };
   const [color, label] = map[status] || ['secondary', status];
   return `<span class="badge bg-${color}">${label}</span>`;
@@ -316,18 +842,22 @@ function statusBadgeHtml(status) {
 
 function timeAgo(ts) {
   const diff = Math.floor(Date.now() / 1000 - ts);
-  if (diff < 10)  return 'just now';
-  if (diff < 60)  return `${diff}s ago`;
+  if (diff < 10)   return 'just now';
+  if (diff < 60)   return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
   return `${Math.floor(diff/3600)}h ago`;
+}
+
+function tryParse(str) {
+  try { return JSON.parse(str); } catch { return {}; }
 }
 
 function escHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-// ── init ────────────────────────────────────────────────────────────────────
+// ── init ──────────────────────────────────────────────────────────────────────
 loadSessions();
-pollTimer = setInterval(loadSessions, 5000);
+setInterval(loadSessions, 5000);
 </script>
 {% endblock %}

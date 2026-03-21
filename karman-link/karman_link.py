@@ -58,8 +58,8 @@ def _eapi_call(host: str, port: int, transport: str,
                username: str, password: str, commands: list,
                timeout: int = 30) -> tuple:
     """
-    Execute eAPI commands.  Returns (success, results_list, error_string).
-    results_list mirrors pyeapi's envelope: [{'command': ..., 'result': {...}}, ...]
+    Execute eAPI enable-mode commands.
+    Returns (success, results_list, error_string).
     """
     try:
         import pyeapi
@@ -73,7 +73,6 @@ def _eapi_call(host: str, port: int, transport: str,
         node = Node(conn)
         raw = node.enable(commands)
 
-        # Normalise result — ensure each item has a plain-dict 'result'
         results = []
         for item in raw:
             if not isinstance(item, dict):
@@ -82,6 +81,39 @@ def _eapi_call(host: str, port: int, transport: str,
             results.append({
                 'command': item.get('command', ''),
                 'result': r if isinstance(r, dict) else {'output': str(r)},
+            })
+        return True, results, None
+
+    except Exception as exc:
+        return False, [], str(exc)
+
+
+def _eapi_config(host: str, port: int, transport: str,
+                 username: str, password: str, commands: list,
+                 timeout: int = 60) -> tuple:
+    """
+    Push configuration-mode commands via eAPI.
+    Wraps commands in configure / end automatically via pyeapi node.config().
+    Returns (success, results_list, error_string).
+    """
+    try:
+        import pyeapi
+        from pyeapi.client import Node
+
+        conn = pyeapi.connect(
+            transport=transport, host=host,
+            username=username, password=password,
+            port=port, timeout=timeout,
+        )
+        node = Node(conn)
+        raw = node.config(commands)
+
+        # node.config() returns a list of response dicts (one per command)
+        results = []
+        for cmd, resp in zip(commands, raw if raw else []):
+            results.append({
+                'command': cmd,
+                'result': resp if isinstance(resp, dict) else {'output': str(resp)},
             })
         return True, results, None
 
@@ -228,22 +260,16 @@ class KarmanLink:
 
     # ── Command execution ──────────────────────────────────────────────────────
 
-    def _handle_execute(self, cmd: dict):
-        command_id = cmd['command_id']
-        payload    = cmd.get('payload', {})
-        host       = payload.get('host') or self.switch_info.get('switch_ip', '')
-        username   = payload.get('username', self.switch_info.get('username', 'admin'))
-        password   = payload.get('password', self.switch_info.get('password', ''))
-        commands   = payload.get('commands', [])
-        port       = self.switch_info.get('port', 80)
-        transport  = self.switch_info.get('transport', 'http')
+    def _conn_params(self, payload: dict) -> tuple:
+        """Resolve host/port/transport/creds from payload, falling back to discovered info."""
+        host      = payload.get('host')      or self.switch_info.get('switch_ip', '')
+        port      = payload.get('port')      or self.switch_info.get('port', 80)
+        transport = payload.get('transport') or self.switch_info.get('transport', 'http')
+        username  = payload.get('username',  self.switch_info.get('username', 'admin'))
+        password  = payload.get('password',  self.switch_info.get('password', ''))
+        return host, int(port), transport, username, password
 
-        log.info(f"  → {commands}")
-
-        success, results, error = _eapi_call(
-            host, port, transport, username, password, commands
-        )
-
+    def _post_result(self, command_id: str, success: bool, results: list, error: str):
         self._post(f'/api/agent/sessions/{self.session_id}/result', {
             'command_id': command_id,
             'success':    success,
@@ -251,10 +277,33 @@ class KarmanLink:
             'error':      error or '',
         })
 
-        if success:
-            log.info(f"  ✓ OK")
-        else:
-            log.warning(f"  ✗ {error}")
+    def _handle_execute(self, cmd: dict):
+        """Run enable-mode commands (show commands, write memory, etc.)."""
+        command_id              = cmd['command_id']
+        payload                 = cmd.get('payload', {})
+        host, port, transport, username, password = self._conn_params(payload)
+        commands                = payload.get('commands', [])
+
+        log.info(f"  [execute] {commands}  →  {host}")
+        success, results, error = _eapi_call(
+            host, port, transport, username, password, commands
+        )
+        self._post_result(command_id, success, results, error)
+        log.info(f"  {'✓ OK' if success else '✗ ' + str(error)}")
+
+    def _handle_configure(self, cmd: dict):
+        """Push configuration-mode commands to the switch."""
+        command_id              = cmd['command_id']
+        payload                 = cmd.get('payload', {})
+        host, port, transport, username, password = self._conn_params(payload)
+        commands                = payload.get('commands', [])
+
+        log.info(f"  [configure] {len(commands)} lines  →  {host}")
+        success, results, error = _eapi_config(
+            host, port, transport, username, password, commands
+        )
+        self._post_result(command_id, success, results, error)
+        log.info(f"  {'✓ Configuration applied' if success else '✗ ' + str(error)}")
 
     # ── Main polling loop ──────────────────────────────────────────────────────
 
@@ -279,6 +328,8 @@ class KarmanLink:
             action = cmd.get('action')
             if action == 'execute':
                 self._handle_execute(cmd)
+            elif action == 'configure':
+                self._handle_configure(cmd)
             elif action == 'wait' or not action:
                 time.sleep(3)
             else:

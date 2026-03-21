@@ -3435,6 +3435,9 @@ def agent_command_result(session_id):
     if success and result:
         _agent_process_result(session_id, command_id, result)
 
+    # Advance session status when all queued commands for this phase complete
+    _check_session_completion(session_id)
+
     return jsonify({'ok': True})
 
 
@@ -3445,6 +3448,29 @@ def agent_disconnect(session_id):
         session_id, status='disconnected', disconnected_at=time.time()
     )
     return jsonify({'ok': True})
+
+
+def _check_session_completion(session_id: str):
+    """Advance session status to complete/failed once all phase commands finish."""
+    session = agent_mgr.get_session(session_id)
+    if not session:
+        return
+    current = session.get('status', '')
+    if current not in ('ingesting', 'provisioning'):
+        return
+
+    commands = agent_mgr.get_session_commands(session_id)
+    if not commands:
+        return
+    if any(not c.get('completed_at') for c in commands):
+        return  # still in progress
+
+    any_failed = any(c.get('success') == 0 for c in commands if c.get('completed_at'))
+    if current == 'ingesting':
+        new_status = 'ingest_failed' if any_failed else 'ingest_complete'
+    else:
+        new_status = 'provision_failed' if any_failed else 'provision_complete'
+    agent_mgr.update_session(session_id, status=new_status)
 
 
 def _agent_process_result(session_id: str, command_id: str, result: list):
@@ -3506,12 +3532,15 @@ def agent_start_ingest(session_id):
     if not session.get('switch_ip'):
         return jsonify({'error': 'No switch discovered in this session yet'}), 400
 
-    data     = request.get_json() or {}
-    username = data.get('username', 'admin')
-    password = data.get('password', '')
+    data      = request.get_json() or {}
+    username  = data.get('username', 'admin')
+    password  = data.get('password', '')
+    host      = data.get('host') or session['switch_ip']
+    port      = int(data.get('port', 80))
+    transport = data.get('transport', 'http')
 
     cmd_ids = agent_mgr.queue_ingest(
-        session_id, session['switch_ip'], username, password
+        session_id, host, username, password, port, transport
     )
     agent_mgr.update_session(session_id, status='ingesting')
     app.logger.info(
@@ -3530,6 +3559,121 @@ def agent_session_progress(session_id):
         return jsonify({'error': 'Session not found'}), 404
     commands = agent_mgr.get_session_commands(session_id)
     return jsonify({'session': session, 'commands': commands})
+
+
+@app.route('/api/agent/sessions/<session_id>/provision-new', methods=['POST'])
+@login_required
+def agent_provision_new(session_id):
+    """Queue bootstrap config for a factory-reset switch."""
+    session = agent_mgr.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    if not session.get('switch_ip'):
+        return jsonify({'error': 'No switch discovered in this session yet'}), 400
+
+    data = request.get_json() or {}
+    mgmt_ip   = (data.get('mgmt_ip') or '').strip()
+    prefix    = (data.get('prefix_len') or '24').strip()
+    gateway   = (data.get('gateway') or '').strip()
+    if not mgmt_ip or not gateway:
+        return jsonify({'error': 'mgmt_ip and gateway are required'}), 400
+
+    cmd_ids = agent_mgr.queue_provision_new(
+        session_id, session['switch_ip'],
+        mgmt_ip=mgmt_ip, prefix_len=prefix, gateway=gateway,
+        new_password=data.get('new_password', ''),
+        vrf=data.get('vrf', 'default'),
+        enable_eapi=data.get('enable_eapi', True),
+        enable_ssh=data.get('enable_ssh', True),
+        enable_terminattr=data.get('enable_terminattr', False),
+        extra_config=data.get('extra_config', ''),
+    )
+    agent_mgr.update_session(session_id, status='provisioning')
+    app.logger.info(
+        f"[Agent] Provision-new queued for session {session_id[:8]} "
+        f"({session['switch_ip']} → {mgmt_ip}) — {len(cmd_ids)} commands"
+    )
+    return jsonify({'ok': True, 'queued': len(cmd_ids)})
+
+
+@app.route('/api/agent/sessions/<session_id>/adopt', methods=['POST'])
+@login_required
+def agent_adopt(session_id):
+    """Queue adoption config for a switch already on the network."""
+    session = agent_mgr.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+
+    data      = request.get_json() or {}
+    switch_ip = (data.get('switch_ip') or session.get('switch_ip') or '').strip()
+    if not switch_ip:
+        return jsonify({'error': 'switch_ip is required'}), 400
+
+    port      = int(data.get('port', 443))
+    transport = data.get('transport', 'https')
+
+    cmd_ids = agent_mgr.queue_adopt(
+        session_id, switch_ip,
+        username=data.get('username', 'admin'),
+        password=data.get('password', ''),
+        port=port, transport=transport,
+        vrf=data.get('vrf', 'default'),
+        enable_eapi=data.get('enable_eapi', True),
+        enable_ssh=data.get('enable_ssh', True),
+        enable_terminattr=data.get('enable_terminattr', False),
+    )
+    agent_mgr.update_session(session_id, switch_ip=switch_ip, status='provisioning')
+    app.logger.info(
+        f"[Agent] Adopt queued for session {session_id[:8]} ({switch_ip}) "
+        f"— {len(cmd_ids)} commands"
+    )
+    return jsonify({'ok': True, 'queued': len(cmd_ids)})
+
+
+@app.route('/api/agent/sessions/<session_id>/add-to-inventory', methods=['POST'])
+@login_required
+def agent_add_to_inventory(session_id):
+    """Create a device inventory entry from collected ingest/session data."""
+    session = agent_mgr.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+
+    data     = request.get_json() or {}
+    hostname = (data.get('hostname') or session.get('switch_hostname') or '').strip()
+    ip       = (data.get('ip') or session.get('switch_ip') or '').strip()
+    mgmt_type_str = data.get('management_type', 'eapi')
+
+    if not hostname or not ip:
+        return jsonify({'error': 'hostname and ip are required'}), 400
+
+    from core.inventory import Device, DeviceType, DeviceRole
+    try:
+        mgmt_type = DeviceType(mgmt_type_str)
+    except ValueError:
+        mgmt_type = DeviceType.EAPI_MANAGED
+
+    device = Device(
+        hostname=hostname,
+        ip_address=ip,
+        model=session.get('switch_model', ''),
+        serial_number=session.get('switch_serial', ''),
+        eos_version=session.get('switch_eos', ''),
+        management_type=mgmt_type,
+        role=DeviceRole.LEAF,
+        site=data.get('site', ''),
+        container=data.get('container', ''),
+    )
+    try:
+        inventory_manager.add_device(device)
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+    agent_mgr.update_session(session_id, status='adopted')
+    app.logger.info(
+        f"[Agent] Device {hostname} ({ip}) added to inventory "
+        f"from session {session_id[:8]}"
+    )
+    return jsonify({'ok': True, 'hostname': hostname})
 
 
 # ── Agent key management (admin only) ─────────────────────────────────────────
