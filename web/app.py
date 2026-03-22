@@ -34,6 +34,7 @@ from core.user import UserManager
 from core.notification import NotificationManager
 from core.agent_manager import AgentManager
 from core.alert_manager import AlertManager
+from core.ztp_manager import ZTPManager
 from builder import ConfigletBuilder
 from validator import ConfigValidator
 from web.email_sender import EmailSender
@@ -66,6 +67,7 @@ notification_mgr = NotificationManager(DB_PATH)
 email_sender = EmailSender(DB_PATH)
 agent_mgr = AgentManager(DB_PATH)
 alert_mgr = AlertManager(DB_PATH)
+ztp_mgr   = ZTPManager(DB_PATH)
 builder = ConfigletBuilder()
 validator = ConfigValidator()
 
@@ -4372,20 +4374,24 @@ def api_compliance_diff(hostname):
 @login_required
 def api_compliance_sync(hostname):
     """Manual backup trigger for compliance page."""
-    device = inventory_mgr.get_device(hostname)
-    if not device:
-        return jsonify({'success': False, 'error': 'Device not found'}), 404
+    try:
+        device = inventory_mgr.get_device(hostname)
+        if not device:
+            return jsonify({'success': False, 'error': 'Device not found'}), 404
 
-    data = request.get_json() or {}
-    username = data.get('username', os.environ.get('DEFAULT_DEVICE_USERNAME', 'admin'))
-    password = data.get('password', os.environ.get('DEFAULT_DEVICE_PASSWORD', ''))
+        data = request.get_json(silent=True) or {}
+        username = data.get('username', os.environ.get('DEFAULT_DEVICE_USERNAME', 'admin'))
+        password = data.get('password', os.environ.get('DEFAULT_DEVICE_PASSWORD', ''))
 
-    result = _do_device_backup(
-        hostname, device.ip_address,
-        device.management_type.value, device.gnmi_port,
-        username, password
-    )
-    return jsonify(result)
+        result = _do_device_backup(
+            hostname, device.ip_address,
+            device.management_type.value, device.gnmi_port,
+            username, password
+        )
+        return jsonify(result)
+    except Exception as e:
+        app.logger.error(f"Compliance sync error [{hostname}]: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ==================== BGP Dashboard ====================
@@ -4399,39 +4405,307 @@ def bgp_dashboard():
 @app.route('/api/bgp/summary')
 @login_required
 def api_bgp_summary():
-    """Return all BGP peers from cached telemetry."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT devices_json FROM telemetry_cache WHERE id=1")
-        row = cursor.fetchone()
-        conn.close()
+    """Return all BGP peers — from cache if fresh and populated, else live per-device."""
+    username = os.environ.get('DEFAULT_DEVICE_USERNAME', 'admin')
+    password = os.environ.get('DEFAULT_DEVICE_PASSWORD', '')
 
-        if not row:
-            return jsonify({'peers': [], 'from_cache': True, 'age': None})
-
-        devices_data = json.loads(row[0])
+    def _extract_peers(devices_data, source_label):
         peers = []
         for entry in devices_data:
-            hostname = entry.get('hostname', '')
+            hn = entry.get('hostname', '')
             bgp = entry.get('telemetry', {}).get('bgp', {})
             for vrf_name, vrf_data in bgp.get('vrfs', {}).items():
                 for peer in vrf_data.get('peers', []):
                     peers.append({
-                        'hostname': hostname,
+                        'hostname': hn,
                         'vrf': vrf_name,
                         'neighbor': peer.get('neighbor', ''),
                         'asn': peer.get('asn', ''),
                         'state': peer.get('state', ''),
                         'prefixes_received': peer.get('prefixes_received', 0),
                         'uptime': peer.get('uptime', 0),
+                        'source': source_label,
                     })
+        return peers
 
-        return jsonify({'peers': peers, 'from_cache': True})
+    try:
+        # ── Try cache first ──────────────────────────────────────────────────
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT devices_json, updated_at FROM telemetry_cache WHERE id=1")
+        row = cursor.fetchone()
+        conn.close()
+
+        cache_age = int(time.time() - row[1]) if row else None
+
+        if row:
+            devices_data = json.loads(row[0])
+            # Check if any device in cache actually has BGP data
+            cache_has_bgp = any(
+                entry.get('telemetry', {}).get('bgp', {}).get('vrfs')
+                for entry in devices_data
+            )
+            if cache_has_bgp:
+                return jsonify({
+                    'peers': _extract_peers(devices_data, 'cache'),
+                    'from_cache': True,
+                    'cache_age': cache_age,
+                })
+
+        # ── Cache has no BGP data — collect live from each device ────────────
+        conn2 = sqlite3.connect(DB_PATH)
+        cursor2 = conn2.cursor()
+        cursor2.execute(
+            "SELECT hostname, ip_address, management_type, gnmi_port FROM devices"
+        )
+        device_rows = cursor2.fetchall()
+        conn2.close()
+
+        if not device_rows:
+            return jsonify({'peers': [], 'from_cache': False, 'cache_age': cache_age})
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _fetch_bgp_live(row):
+            hn, ip, mgmt, gnmi_port = row
+            try:
+                if mgmt == 'eapi':
+                    connector = EAPIConnector(ip, username, password, timeout=10)
+                    if not connector.connect():
+                        return hn, {}
+                    data = _live_metrics_eapi(connector, 'bgp')
+                elif mgmt == 'ssh':
+                    connector = NetmikoConnector(ip, username, password, timeout=10)
+                    if not connector.connect():
+                        return hn, {}
+                    data = _live_metrics_ssh(connector, 'bgp')
+                    connector.disconnect()
+                elif mgmt == 'gnmi':
+                    # Try eAPI first for BGP on gNMI devices
+                    try:
+                        connector = EAPIConnector(ip, username, password, timeout=8)
+                        if connector.connect():
+                            data = _live_metrics_eapi(connector, 'bgp')
+                        else:
+                            return hn, {}
+                    except Exception:
+                        return hn, {}
+                else:
+                    return hn, {}
+                return hn, data
+            except Exception as e:
+                app.logger.debug(f"[BGP live] {hn}: {e}")
+                return hn, {}
+
+        live_entries = []
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futs = {pool.submit(_fetch_bgp_live, r): r for r in device_rows}
+            for fut in as_completed(futs, timeout=20):
+                try:
+                    hn, bgp_data = fut.result()
+                    live_entries.append({
+                        'hostname': hn,
+                        'telemetry': {'bgp': bgp_data}
+                    })
+                except Exception:
+                    pass
+
+        return jsonify({
+            'peers': _extract_peers(live_entries, 'live'),
+            'from_cache': False,
+            'cache_age': cache_age,
+        })
 
     except Exception as e:
         app.logger.error(f"BGP summary error: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+# ==================== ZTP ====================
+
+def _probe_mgmt_type(ip: str, gnmi_port: int = 6030) -> str:
+    """TCP-probe an IP and return the best management type string."""
+    import socket as _socket
+    def _probe(port):
+        try:
+            s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            s.settimeout(2)
+            ok = s.connect_ex((ip, port)) == 0
+            s.close()
+            return ok
+        except Exception:
+            return False
+    if _probe(gnmi_port):
+        return 'gnmi'
+    if _probe(443):
+        return 'eapi'
+    if _probe(22):
+        return 'ssh'
+    return 'eapi'   # fall back to eAPI — connector will retry over HTTP
+
+
+@app.route('/ztp')
+@admin_required
+def ztp_settings():
+    settings = ztp_mgr.get_settings()
+    if not settings.get('ztp_karman_url'):
+        settings['ztp_karman_url'] = request.host_url.rstrip('/')
+    interfaces   = ztp_mgr.get_network_interfaces()
+    dhcp_status  = ztp_mgr.get_dhcp_status()
+    leases       = ztp_mgr.get_leases()
+    dnsmasq_avail = ztp_mgr.is_dnsmasq_available()
+    return render_template('ztp.html',
+        settings=settings,
+        interfaces=interfaces,
+        dhcp_status=dhcp_status,
+        leases=leases,
+        dnsmasq_available=dnsmasq_avail,
+        app_name=APP_NAME,
+    )
+
+
+@app.route('/admin/settings/ztp', methods=['POST'])
+@admin_required
+def admin_settings_ztp():
+    f = request.form
+    settings = {
+        'ztp_enabled':           'true' if f.get('ztp_enabled') else 'false',
+        'ztp_dhcp_enabled':      'true' if f.get('ztp_dhcp_enabled') else 'false',
+        'ztp_dhcp_interface':    f.get('ztp_dhcp_interface', 'eth0'),
+        'ztp_dhcp_range_start':  f.get('ztp_dhcp_range_start', ''),
+        'ztp_dhcp_range_end':    f.get('ztp_dhcp_range_end', ''),
+        'ztp_dhcp_netmask':      f.get('ztp_dhcp_netmask', '255.255.255.0'),
+        'ztp_dhcp_gateway':      f.get('ztp_dhcp_gateway', ''),
+        'ztp_dhcp_dns':          f.get('ztp_dhcp_dns', '8.8.8.8'),
+        'ztp_dhcp_lease_time':   f.get('ztp_dhcp_lease_time', '24h'),
+        'ztp_default_username':  f.get('ztp_default_username', 'admin'),
+        'ztp_default_password':  f.get('ztp_default_password', 'admin'),
+        'ztp_karman_url':        f.get('ztp_karman_url', '').rstrip('/'),
+        'ztp_api_key':           f.get('ztp_api_key', ''),
+        'ztp_auto_add':          'true' if f.get('ztp_auto_add') else 'false',
+        'ztp_default_role':      f.get('ztp_default_role', 'leaf'),
+        'ztp_default_site':      f.get('ztp_default_site', ''),
+        'ztp_default_mgmt_type': f.get('ztp_default_mgmt_type', 'auto'),
+        'ztp_base_config':       f.get('ztp_base_config', ''),
+    }
+    ztp_mgr.save_settings(settings)
+    # Restart DHCP if it was running and dhcp settings changed
+    if settings['ztp_dhcp_enabled'] == 'true':
+        status = ztp_mgr.get_dhcp_status()
+        if status.get('running'):
+            ztp_mgr.start_dhcp(settings)
+    flash('ZTP settings saved', 'success')
+    return redirect(url_for('ztp_settings'))
+
+
+@app.route('/ztp/script')
+def ztp_script():
+    """Serve the ZTP Python script — no auth, called by devices during boot."""
+    from flask import Response
+    settings = ztp_mgr.get_settings()
+    if settings.get('ztp_enabled') != 'true':
+        return jsonify({'error': 'ZTP not enabled'}), 404
+    script = ztp_mgr.generate_ztp_script(settings)
+    return Response(
+        script,
+        mimetype='text/x-python',
+        headers={'Content-Disposition': 'attachment; filename=karman_ztp.py'},
+    )
+
+
+@app.route('/api/devices/register', methods=['POST'])
+def api_device_register():
+    """Auto-registration endpoint called by ZTP scripts on device boot."""
+    settings = ztp_mgr.get_settings()
+    if settings.get('ztp_enabled') != 'true':
+        return jsonify({'success': False, 'message': 'ZTP not enabled'}), 403
+
+    data     = request.get_json(silent=True) or {}
+    api_key  = settings.get('ztp_api_key', '')
+    if api_key and data.get('api_key') != api_key:
+        return jsonify({'success': False, 'message': 'Invalid API key'}), 401
+
+    hostname = data.get('hostname', '').strip()
+    ip       = data.get('ip', '').strip()
+    mac      = data.get('mac', '').strip()
+
+    if not hostname or not ip:
+        return jsonify({'success': False, 'message': 'hostname and ip are required'}), 400
+
+    # Already registered?
+    existing = inventory_mgr.get_device(hostname)
+    if existing:
+        return jsonify({'success': True, 'message': 'Already registered', 'existing': True})
+
+    if settings.get('ztp_auto_add') != 'true':
+        return jsonify({'success': True,
+                        'message': 'Auto-add disabled — device queued for manual review'})
+
+    # Detect or use configured management type
+    mgmt_str = settings.get('ztp_default_mgmt_type', 'auto')
+    if mgmt_str == 'auto':
+        mgmt_str = _probe_mgmt_type(ip)
+
+    try:
+        device = Device(
+            hostname=hostname,
+            ip_address=ip,
+            model='',
+            serial_number='',
+            eos_version='',
+            management_type=DeviceType(mgmt_str),
+            role=DeviceRole(settings.get('ztp_default_role', 'leaf')),
+            site=settings.get('ztp_default_site', ''),
+            container='',
+            cvp_managed=False,
+        )
+        inventory_mgr.add_device(device)
+
+        if mac:
+            ztp_mgr.record_registration(mac, hostname)
+
+        # Notify all admins
+        admins = [u for u in user_mgr.list_all_users() if u.is_admin]
+        for admin in admins:
+            notification_mgr.create_notification(
+                admin.user_id,
+                'device_registered',
+                'New Device Registered via ZTP',
+                f'{hostname} ({ip}) was automatically added via Zero Touch Provisioning.',
+            )
+
+        app.logger.info(f"[ZTP] Auto-registered {hostname} ({ip}) as {mgmt_str}")
+        return jsonify({'success': True, 'message': f'{hostname} registered successfully'})
+
+    except Exception as e:
+        app.logger.error(f"[ZTP] Registration error for {hostname}: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/admin/ztp/dhcp/start', methods=['POST'])
+@admin_required
+def admin_ztp_dhcp_start():
+    settings = ztp_mgr.get_settings()
+    result   = ztp_mgr.start_dhcp(settings)
+    return jsonify(result)
+
+
+@app.route('/admin/ztp/dhcp/stop', methods=['POST'])
+@admin_required
+def admin_ztp_dhcp_stop():
+    return jsonify(ztp_mgr.stop_dhcp())
+
+
+@app.route('/api/ztp/leases')
+@admin_required
+def api_ztp_leases():
+    return jsonify(ztp_mgr.get_leases())
+
+
+@app.route('/api/ztp/status')
+@admin_required
+def api_ztp_status():
+    return jsonify(ztp_mgr.get_dhcp_status())
 
 
 # ==================== Main ====================
