@@ -4521,6 +4521,14 @@ def api_bgp_summary():
         return jsonify({'error': str(e)}), 500
 
 
+# ==================== Docs ====================
+
+@app.route('/docs')
+@login_required
+def docs():
+    return render_template('docs.html')
+
+
 # ==================== ZTP ====================
 
 def _probe_mgmt_type(ip: str, gnmi_port: int = 6030) -> str:
@@ -4560,7 +4568,6 @@ def ztp_settings():
         dhcp_status=dhcp_status,
         leases=leases,
         dnsmasq_available=dnsmasq_avail,
-        app_name=APP_NAME,
     )
 
 

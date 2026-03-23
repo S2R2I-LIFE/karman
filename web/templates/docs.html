@@ -1,0 +1,394 @@
+{% extends "base.html" %}
+
+{% block title %}Documentation — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+  <div class="col-12">
+    <h1 class="mb-1">
+      <i class="bi bi-book"></i> Documentation
+    </h1>
+    <p class="text-muted">Feature reference, device prerequisites, and troubleshooting for Kármán.</p>
+  </div>
+</div>
+
+<div class="row g-4">
+
+  <!-- Sidebar TOC -->
+  <div class="col-lg-3 d-none d-lg-block">
+    <div class="card sticky-top" style="top:80px">
+      <div class="card-header"><h6 class="mb-0">Contents</h6></div>
+      <div class="card-body p-0">
+        <nav class="nav flex-column small">
+          <a class="nav-link px-3 py-2 border-bottom" href="#features">Feature Overview</a>
+          <a class="nav-link px-3 py-2 border-bottom" href="#telemetry">Telemetry Dashboard</a>
+          <a class="nav-link px-3 py-2 border-bottom" href="#devices">Device Management</a>
+          <a class="nav-link px-3 py-2 border-bottom" href="#configlets">Configlets</a>
+          <a class="nav-link px-3 py-2 border-bottom" href="#tasks">Tasks / Change Control</a>
+          <a class="nav-link px-3 py-2 border-bottom" href="#compliance">Compliance & Backups</a>
+          <a class="nav-link px-3 py-2 border-bottom" href="#bgp">BGP Dashboard</a>
+          <a class="nav-link px-3 py-2 border-bottom" href="#alerting">Threshold Alerting</a>
+          <a class="nav-link px-3 py-2 border-bottom" href="#ztp">Zero Touch Provisioning</a>
+          <a class="nav-link px-3 py-2 border-bottom" href="#topology">Topology</a>
+          <a class="nav-link px-3 py-2 border-bottom" href="#eos-config">EOS Device Config</a>
+          <a class="nav-link px-3 py-2" href="#troubleshooting">Troubleshooting</a>
+        </nav>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main content -->
+  <div class="col-lg-9">
+
+    <!-- Feature Overview -->
+    <div class="card mb-4" id="features">
+      <div class="card-header"><h5 class="mb-0"><i class="bi bi-grid-3x3-gap text-primary"></i> Feature Overview</h5></div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <div class="d-flex gap-3 mb-3">
+              <i class="bi bi-speedometer2 text-primary fs-4 flex-shrink-0"></i>
+              <div><strong>Telemetry Dashboard</strong><br><span class="text-muted small">Live per-device CPU, memory, interfaces, and temperature. Auto-refreshes every 30 seconds. Sortable by health severity.</span></div>
+            </div>
+            <div class="d-flex gap-3 mb-3">
+              <i class="bi bi-hdd-network text-success fs-4 flex-shrink-0"></i>
+              <div><strong>Device Inventory</strong><br><span class="text-muted small">Source of truth for all managed devices. Supports eAPI, SSH, and gNMI management types with auto-detection.</span></div>
+            </div>
+            <div class="d-flex gap-3 mb-3">
+              <i class="bi bi-file-code text-info fs-4 flex-shrink-0"></i>
+              <div><strong>Configlets</strong><br><span class="text-muted small">Store, version, and deploy EOS configuration snippets with SHA256 change tracking and full history.</span></div>
+            </div>
+            <div class="d-flex gap-3 mb-3">
+              <i class="bi bi-check2-square text-warning fs-4 flex-shrink-0"></i>
+              <div><strong>Tasks / Change Control</strong><br><span class="text-muted small">Structured workflow for pushing config changes — create, review, execute, and roll back.</span></div>
+            </div>
+            <div class="d-flex gap-3 mb-3">
+              <i class="bi bi-diagram-3 text-secondary fs-4 flex-shrink-0"></i>
+              <div><strong>Topology</strong><br><span class="text-muted small">LLDP-based network graph auto-discovered from live devices. Interactive drag-and-drop layout.</span></div>
+            </div>
+            <div class="d-flex gap-3">
+              <i class="bi bi-terminal text-light fs-4 flex-shrink-0"></i>
+              <div><strong>CLI & MIB Browser</strong><br><span class="text-muted small">Browse the full Arista EOS command hierarchy and SNMP MIB tree directly in the UI.</span></div>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="d-flex gap-3 mb-3">
+              <i class="bi bi-shield-check text-success fs-4 flex-shrink-0"></i>
+              <div><strong>Compliance & Drift</strong><br><span class="text-muted small">Scheduled running-config backups with SHA256 drift detection and unified diff view.</span></div>
+            </div>
+            <div class="d-flex gap-3 mb-3">
+              <i class="bi bi-reception-4 text-info fs-4 flex-shrink-0"></i>
+              <div><strong>BGP Dashboard</strong><br><span class="text-muted small">Fleet-wide BGP peer state view across all devices and VRFs, with live fallback collection.</span></div>
+            </div>
+            <div class="d-flex gap-3 mb-3">
+              <i class="bi bi-bell-fill text-warning fs-4 flex-shrink-0"></i>
+              <div><strong>Threshold Alerting</strong><br><span class="text-muted small">Proactive alerts for CPU, memory, interface-down count, device-down, and critical temperature — with cooldown and email.</span></div>
+            </div>
+            <div class="d-flex gap-3 mb-3">
+              <i class="bi bi-broadcast-pin text-primary fs-4 flex-shrink-0"></i>
+              <div><strong>Zero Touch Provisioning</strong><br><span class="text-muted small">DHCP + EOS boot script to automatically onboard new Arista switches without manual intervention.</span></div>
+            </div>
+            <div class="d-flex gap-3 mb-3">
+              <i class="bi bi-envelope text-danger fs-4 flex-shrink-0"></i>
+              <div><strong>Email Notifications</strong><br><span class="text-muted small">SMTP-backed email for access requests, approvals, alert firing/resolved, and backup failures.</span></div>
+            </div>
+            <div class="d-flex gap-3">
+              <i class="bi bi-people text-secondary fs-4 flex-shrink-0"></i>
+              <div><strong>User Management</strong><br><span class="text-muted small">Role-based access (admin / standard), approval workflow, account lockout, and audit log.</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Telemetry -->
+    <div class="card mb-4" id="telemetry">
+      <div class="card-header"><h5 class="mb-0"><i class="bi bi-speedometer2 text-primary"></i> Telemetry Dashboard</h5></div>
+      <div class="card-body">
+        <p>The dashboard polls all devices concurrently every ~30 seconds using a background daemon thread. Results are cached in SQLite and served instantly to the browser.</p>
+        <h6>Card sorting priority</h6>
+        <table class="table table-sm table-bordered mb-3">
+          <thead><tr><th>Priority</th><th>Condition</th></tr></thead>
+          <tbody>
+            <tr><td>1 (top)</td><td>Device is DOWN / unreachable</td></tr>
+            <tr><td>2</td><td>Critical temperature sensor</td></tr>
+            <tr><td>3</td><td>Warning temperature sensor</td></tr>
+            <tr><td>4</td><td>One or more interfaces down</td></tr>
+            <tr><td>5 (bottom)</td><td>All interfaces up, normal temp</td></tr>
+          </tbody>
+        </table>
+        <h6>Controls</h6>
+        <ul class="text-muted small">
+          <li><strong>Normal / Compact</strong> — toggle 2-per-row or 4-per-row card layout</li>
+          <li><strong>Group by Site</strong> — collapse/expand device cards by site label</li>
+          <li><strong>°F / °C</strong> — click any temperature badge to toggle the unit fleet-wide</li>
+          <li>Sites with DOWN devices are always expanded and highlighted with a red border</li>
+        </ul>
+        <h6>Interface Telemetry tab (device detail)</h6>
+        <p class="text-muted small mb-0">Only shown for devices with management type <strong>gNMI</strong>. Displays a stepped line chart of interface active status over time (1h/6h/24h) and a link flap count table, backed by Prometheus/gnmic data.</p>
+      </div>
+    </div>
+
+    <!-- Devices -->
+    <div class="card mb-4" id="devices">
+      <div class="card-header"><h5 class="mb-0"><i class="bi bi-hdd-network text-success"></i> Device Management</h5></div>
+      <div class="card-body">
+        <h6>Management types</h6>
+        <table class="table table-sm table-bordered mb-3">
+          <thead><tr><th>Type</th><th>Port</th><th>Library</th><th>Best for</th></tr></thead>
+          <tbody>
+            <tr><td>eAPI</td><td>443 / 80</td><td>pyeapi</td><td>Most Arista deployments — structured JSON responses</td></tr>
+            <tr><td>SSH</td><td>22</td><td>netmiko</td><td>Any device; text output parsing</td></tr>
+            <tr><td>gNMI</td><td>6030</td><td>pygnmi</td><td>Streaming telemetry + Interface Metrics tab</td></tr>
+            <tr><td>CVP</td><td>—</td><td>cvprac</td><td>Devices already managed by CloudVision Portal</td></tr>
+          </tbody>
+        </table>
+        <p class="text-muted small">Use the <strong>Detect</strong> button when adding a device — Kármán will TCP-probe ports 443, 22, and 6030 and suggest the best management type automatically.</p>
+        <h6>Per-device sync</h6>
+        <p class="text-muted small mb-0">The <strong>Sync</strong> button on the device detail page triggers an immediate running-config backup. The config is stored as a configlet named <code>&lt;hostname&gt;-running-config</code> and the compliance status is updated.</p>
+      </div>
+    </div>
+
+    <!-- Configlets -->
+    <div class="card mb-4" id="configlets">
+      <div class="card-header"><h5 class="mb-0"><i class="bi bi-file-code text-info"></i> Configlets</h5></div>
+      <div class="card-body">
+        <p>Configlets are named EOS configuration snippets stored in Kármán with full versioning. Every save generates a new version entry with SHA256 hash, timestamp, and optional change reason.</p>
+        <ul class="text-muted small">
+          <li>Files are stored on disk at <code>./configlets/&lt;name&gt;.cfg</code></li>
+          <li>Running-config backups are automatically stored as <code>&lt;hostname&gt;-running-config.cfg</code></li>
+          <li>Configlets can be assigned to devices and deployed via Tasks</li>
+          <li>History tab shows every version — click any version to diff against the current</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Tasks -->
+    <div class="card mb-4" id="tasks">
+      <div class="card-header"><h5 class="mb-0"><i class="bi bi-check2-square text-warning"></i> Tasks / Change Control</h5></div>
+      <div class="card-body">
+        <h6>Lifecycle</h6>
+        <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+          <span class="badge bg-secondary">PENDING</span>
+          <i class="bi bi-arrow-right text-muted"></i>
+          <span class="badge bg-primary">IN PROGRESS</span>
+          <i class="bi bi-arrow-right text-muted"></i>
+          <span class="badge bg-success">COMPLETED</span>
+          <span class="text-muted mx-2">or</span>
+          <span class="badge bg-danger">FAILED</span>
+          <span class="text-muted mx-2">or</span>
+          <span class="badge bg-warning text-dark">ROLLED BACK</span>
+        </div>
+        <ul class="text-muted small mb-0">
+          <li>Tasks target one or more devices and carry a set of config changes to apply</li>
+          <li>Execution is logged per-device — partial failures are captured without blocking other devices</li>
+          <li>Rollback information is stored at task creation time so changes can be reversed</li>
+          <li>Only admins can execute or cancel tasks</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Compliance -->
+    <div class="card mb-4" id="compliance">
+      <div class="card-header"><h5 class="mb-0"><i class="bi bi-shield-check text-success"></i> Compliance & Scheduled Backups</h5></div>
+      <div class="card-body">
+        <h6>Compliance statuses</h6>
+        <table class="table table-sm table-bordered mb-3">
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge bg-success">CLEAN</span></td><td>Running config SHA256 matches the last known snapshot</td></tr>
+            <tr><td><span class="badge bg-danger">DRIFT</span></td><td>Running config has changed since the last backup</td></tr>
+            <tr><td><span class="badge bg-secondary">NEVER SYNCED</span></td><td>Device has never been backed up by Kármán</td></tr>
+          </tbody>
+        </table>
+        <h6>Scheduled backups</h6>
+        <p class="text-muted small">Configure at <strong>Admin → Settings → Config Backup</strong>. Choose daily or weekly, set the UTC hour, and Kármán's backup background thread will capture running configs automatically. Each backup stores the full config as a configlet and updates the <strong>Last Backup</strong> timestamp on the Devices page.</p>
+        <h6>Diff view</h6>
+        <p class="text-muted small mb-0">Click <strong>View Diff</strong> on any DRIFT device to see a unified diff between the previous and current config snapshots — added lines are highlighted green, removed lines red.</p>
+      </div>
+    </div>
+
+    <!-- BGP -->
+    <div class="card mb-4" id="bgp">
+      <div class="card-header"><h5 class="mb-0"><i class="bi bi-reception-4 text-info"></i> BGP Dashboard</h5></div>
+      <div class="card-body">
+        <p>The BGP page shows peer state for every BGP neighbor across all devices and VRFs. Data is collected during the background telemetry cycle and cached. The page falls back to a live concurrent query if the cache has not yet been warmed.</p>
+        <h6>Peer state badges</h6>
+        <div class="d-flex gap-2 flex-wrap mb-3">
+          <span class="badge bg-success">Established</span>
+          <span class="badge bg-warning text-dark">Active</span>
+          <span class="badge bg-warning text-dark">Connect</span>
+          <span class="badge bg-warning text-dark">OpenSent</span>
+          <span class="badge bg-warning text-dark">OpenConfirm</span>
+          <span class="badge bg-danger">Idle</span>
+          <span class="badge bg-secondary">Unknown</span>
+        </div>
+        <ul class="text-muted small mb-0">
+          <li>Filter by device, VRF, or state using the filter bar — filtering is client-side (instant, no reload)</li>
+          <li>BGP state changes from Established → any other state trigger an in-app notification to all admins</li>
+          <li>BGP is collected via eAPI for eAPI and SSH-managed devices; gNMI devices fall back to eAPI for BGP</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Alerting -->
+    <div class="card mb-4" id="alerting">
+      <div class="card-header"><h5 class="mb-0"><i class="bi bi-bell-fill text-warning"></i> Threshold Alerting</h5></div>
+      <div class="card-body">
+        <p>Alert rules are evaluated every ~30 seconds by the alert background thread against the live telemetry cache. Navigate to <strong>Admin → Alert Rules</strong> to manage rules and view recent events.</p>
+        <h6>Alert types</h6>
+        <table class="table table-sm table-bordered mb-3">
+          <thead><tr><th>Type</th><th>Threshold</th><th>Source metric</th></tr></thead>
+          <tbody>
+            <tr><td><code>cpu</code></td><td>% (e.g. 80)</td><td>System CPU usage percent</td></tr>
+            <tr><td><code>memory</code></td><td>% (e.g. 90)</td><td>System memory usage percent</td></tr>
+            <tr><td><code>interface_down_count</code></td><td>count (e.g. 2)</td><td>Number of interfaces in down state</td></tr>
+            <tr><td><code>device_down</code></td><td>—</td><td>Device unreachable (boolean)</td></tr>
+            <tr><td><code>temperature_critical</code></td><td>—</td><td>Any sensor in critical state (boolean)</td></tr>
+          </tbody>
+        </table>
+        <h6>Rule options</h6>
+        <ul class="text-muted small mb-0">
+          <li><strong>Scope</strong> — <code>all</code> applies to every polled device; a hostname targets one device</li>
+          <li><strong>Cooldown</strong> — minimum minutes before a re-notification for an already-firing event</li>
+          <li><strong>Email</strong> — send email to all admins in addition to in-app notification</li>
+          <li><strong>Enable/disable</strong> — pause a rule without deleting it</li>
+          <li>Events have <code>firing</code> and <code>resolved</code> states — resolution is automatic when the condition clears</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- ZTP -->
+    <div class="card mb-4" id="ztp">
+      <div class="card-header"><h5 class="mb-0"><i class="bi bi-broadcast-pin text-primary"></i> Zero Touch Provisioning (ZTP)</h5></div>
+      <div class="card-body">
+        <h6>How it works</h6>
+        <ol class="text-muted small mb-3">
+          <li>New Arista switch boots with no startup config and enters ZTP mode</li>
+          <li>Switch sends a DHCP request; server returns <strong>Option 67</strong> pointing to <code>/ztp/script</code></li>
+          <li>EOS downloads and executes the Python script</li>
+          <li>Script writes the base config to <code>/mnt/flash/startup-config</code></li>
+          <li>Script calls back to <code>POST /api/devices/register</code></li>
+          <li>Kármán adds the device to inventory, notifies all admins, and the device appears on the dashboard within one telemetry cycle</li>
+        </ol>
+        <h6>DHCP options</h6>
+        <div class="row g-3 mb-3">
+          <div class="col-md-6">
+            <div class="card bg-body-secondary h-100">
+              <div class="card-body">
+                <h6 class="card-title"><i class="bi bi-server"></i> Existing DHCP server</h6>
+                <p class="small text-muted mb-1">Add Option 67 to your DHCP server config:</p>
+                <code class="small">option bootfile-name "http://&lt;karman-ip&gt;:5000/ztp/script";</code>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="card bg-body-secondary h-100">
+              <div class="card-body">
+                <h6 class="card-title"><i class="bi bi-router"></i> Built-in DHCP server</h6>
+                <p class="small text-muted mb-0">Enable the dnsmasq-backed server in <strong>Admin → ZTP</strong>. Requires <code>dnsmasq</code> installed and <code>network_mode: host</code> in <code>docker-compose.yml</code>.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <h6>Base config template variables</h6>
+        <table class="table table-sm table-bordered mb-0">
+          <thead><tr><th>Variable</th><th>Replaced with</th></tr></thead>
+          <tbody>
+            <tr><td><code>{username}</code></td><td>Default credentials username</td></tr>
+            <tr><td><code>{password}</code></td><td>Default credentials password</td></tr>
+            <tr><td><code>{hostname}</code></td><td>Device hostname (from EOS <code>show hostname</code>)</td></tr>
+            <tr><td><code>{ip}</code></td><td>Management IP assigned by DHCP</td></tr>
+            <tr><td><code>{karman_url}</code></td><td>Kármán base URL for callbacks</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Topology -->
+    <div class="card mb-4" id="topology">
+      <div class="card-header"><h5 class="mb-0"><i class="bi bi-diagram-3 text-secondary"></i> Topology</h5></div>
+      <div class="card-body">
+        <p class="text-muted small mb-0">The topology page runs <code>show lldp neighbors detail</code> across all reachable devices and builds an interactive graph. Nodes are colour-coded by role (spine/leaf/border/core/access). Drag nodes to rearrange; zoom with scroll wheel. Only devices with eAPI or SSH management types contribute LLDP data — gNMI-only devices appear as isolated nodes if LLDP is not polled separately.</p>
+      </div>
+    </div>
+
+    <!-- EOS Device Config -->
+    <div class="card mb-4" id="eos-config">
+      <div class="card-header"><h5 class="mb-0"><i class="bi bi-cpu text-danger"></i> EOS Device Configuration</h5></div>
+      <div class="card-body">
+        <h6>Minimal config for all three management types (default VRF / vEOS-lab)</h6>
+        <pre class="bg-body-secondary p-3 rounded small"><code>no aaa root
+!
+username admin privilege 15 role network-admin secret admin
+!
+! ── eAPI ──────────────────────────────────────
+management api http-commands
+   protocol http
+   protocol https
+   no shutdown
+   !
+   vrf default
+      no shutdown
+!
+! ── SSH ───────────────────────────────────────
+management ssh
+   no shutdown
+!
+! ── gNMI / TerminAttr ─────────────────────────
+daemon TerminAttr
+   exec /usr/bin/TerminAttr \
+      -grpcaddr=default/0.0.0.0:6030 \
+      -allowed-ips=0.0.0.0/0 \
+      -disableaaa
+   no shutdown
+!</code></pre>
+        <h6 class="mt-3">Key flags</h6>
+        <table class="table table-sm table-bordered mb-0">
+          <thead><tr><th>Flag</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>-allowed-ips=0.0.0.0/0</code></td><td>Allow any IP to connect to gNMI port — required for Kármán (without this, only CVP IPs are allowed)</td></tr>
+            <tr><td><code>-disableaaa</code></td><td>Skip AAA on gRPC — required on vEOS-lab; optional in production</td></tr>
+            <tr><td><code>-grpcaddr=default/0.0.0.0:6030</code></td><td>Bind gNMI to port 6030 in the default VRF — change <code>default</code> to <code>mgmt</code> if using a management VRF</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Troubleshooting -->
+    <div class="card mb-4" id="troubleshooting">
+      <div class="card-header"><h5 class="mb-0"><i class="bi bi-wrench text-secondary"></i> Troubleshooting</h5></div>
+      <div class="card-body">
+        <table class="table table-sm table-bordered mb-3">
+          <thead><tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr></thead>
+          <tbody>
+            <tr><td>Device shows DOWN</td><td>No route, wrong credentials, or eAPI disabled</td><td>Verify IP reachability and eAPI config on switch</td></tr>
+            <tr><td>Metrics tab shows no data</td><td>gnmic not running or wrong target IP</td><td>Check <code>docker logs karman-gnmic</code></td></tr>
+            <tr><td>SSL handshake timeout</td><td>vEOS-lab HTTPS is slow</td><td>Normal — HTTP fallback is automatic</td></tr>
+            <tr><td>BGP page empty on first load</td><td>Cache not yet warmed</td><td>Wait one telemetry cycle (~30s) then reload</td></tr>
+            <tr><td>Compliance sync fails silently</td><td>Device unreachable or no config returned</td><td>Check device is UP; try manual sync and watch toast message</td></tr>
+            <tr><td>Alert rules not firing</td><td>Telemetry cache empty or rule disabled</td><td>Verify device is polled; check rule is enabled and scope is correct</td></tr>
+            <tr><td>ZTP devices not registering</td><td>TerminAttr missing <code>-allowed-ips</code></td><td>Add <code>-allowed-ips=0.0.0.0/0</code> to TerminAttr exec line</td></tr>
+            <tr><td>Built-in DHCP fails to start</td><td>dnsmasq not installed</td><td><code>apt install dnsmasq</code> on the host; set <code>network_mode: host</code></td></tr>
+            <tr><td>500 on any page</td><td>Python exception in route</td><td>Run <code>docker logs custom-cvp-docker --tail=100</code> and look for Traceback</td></tr>
+          </tbody>
+        </table>
+        <h6>Useful commands</h6>
+        <pre class="bg-body-secondary p-3 rounded small"><code># Stream all logs
+docker compose logs -f
+
+# Test eAPI from inside the container
+docker exec custom-cvp-docker python3 -c "
+import pyeapi; from pyeapi.client import Node
+c = pyeapi.connect(transport='http', host='192.168.2.20', username='admin', password='admin', port=80, timeout=10)
+print(Node(c).enable(['show version'])[0]['result']['modelName'])
+"
+
+# Test gNMI port reachability
+nc -zv 192.168.2.20 6030</code></pre>
+      </div>
+    </div>
+
+  </div><!-- /col -->
+</div><!-- /row -->
+{% endblock %}

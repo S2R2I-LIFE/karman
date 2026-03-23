@@ -11,6 +11,11 @@ Kármán is a self-hosted alternative to Arista CloudVision Portal (CVP). It pro
 - CLI browser and MIB browser
 - In-app notifications + email alerts
 - User management with role-based access (admin / standard)
+- **Threshold alerting** — CPU, memory, interface-down, device-down, temperature rules with cooldown and optional email
+- **Scheduled config backups** — daily/weekly automated running-config capture with drift detection
+- **Compliance / drift detection** — per-device config diff view with unified diff display
+- **BGP dashboard** — fleet-wide BGP peer state view with live fallback collection
+- **Zero Touch Provisioning (ZTP)** — automatic device onboarding via DHCP + EOS boot script
 
 ---
 
@@ -248,6 +253,9 @@ GNMIC_USERNAME=admin GNMIC_PASSWORD=yourpassword \
    - Kármán auto-detects the management type by probing TCP ports 443, 22, and 6030.
 3. The dashboard begins polling immediately. Telemetry refreshes every ~30 seconds.
 4. To configure email alerts: **Admin → Settings → Email**.
+5. To set up threshold alerting: **Admin → Alert Rules**.
+6. To enable scheduled backups: **Admin → Settings → Config Backup**.
+7. To enable ZTP: **Admin → Zero Touch Provisioning**.
 
 ---
 
@@ -269,8 +277,6 @@ interface Management0
    ip address 192.168.1.10/24
 
 ip route vrf management 0.0.0.0/0 192.168.1.1
-
-! Allow the switch to reach Kármán (and vice versa)
 ```
 
 > If your switches use the **default VRF** for management (common in lab/vEOS-lab builds), omit the `vrf management` keywords from all configs below.
@@ -356,6 +362,7 @@ TerminAttr is the Arista streaming agent. It exposes gNMI on port 6030 independe
 daemon TerminAttr
    exec /usr/bin/TerminAttr \
       -grpcaddr=mgmt/0.0.0.0:6030 \
+      -allowed-ips=0.0.0.0/0 \
       -disableaaa
    no shutdown
 ```
@@ -365,13 +372,16 @@ daemon TerminAttr
 daemon TerminAttr
    exec /usr/bin/TerminAttr \
       -grpcaddr=default/0.0.0.0:6030 \
+      -allowed-ips=0.0.0.0/0 \
       -disableaaa
    no shutdown
 ```
 
-> **VRF must be specified in `-grpcaddr`** — using `0.0.0.0:6030` without a VRF name will bind to the default VRF only and may not be reachable from the management VRF, or vice versa. Match the VRF to whichever VRF your management IP lives in.
+> **`-allowed-ips=0.0.0.0/0`** allows any IP to connect to the gNMI port. Without this, TerminAttr defaults to only accepting connections from CVP IP addresses, blocking Kármán.
 
 > **`-disableaaa`** skips AAA authentication on the gRPC port. Required on vEOS-lab where local AAA can interfere. Remove it in production if you want gNMI auth enforced.
+
+> **VRF must be specified in `-grpcaddr`** — using `0.0.0.0:6030` without a VRF name will bind to the default VRF only. Match the VRF to whichever VRF your management IP lives in.
 
 Verify TerminAttr is running:
 ```
@@ -412,8 +422,103 @@ By default, vEOS-lab TerminAttr runs without TLS. Kármán's gNMI connector auto
 | Link flap history | No | No | **Yes** |
 | LLDP topology | Yes | Yes | No |
 | Config push | Yes | Yes | No |
+| Config backup / compliance | Yes | Yes | No |
+| BGP peer state | Yes | Yes | No |
 
-> On production hardware with CVP, gNMI exposes version and temperature via OpenConfig paths. On vEOS-lab without CVP those paths return empty — Kármán uses `eos_native` paths for interface status which are always available.
+---
+
+## Features
+
+### Threshold Alerting
+
+Navigate to **Admin → Alert Rules** to create rules that fire when a metric crosses a threshold.
+
+Supported alert types:
+| Type | Description |
+|------|-------------|
+| `cpu` | CPU usage % exceeds threshold |
+| `memory` | Memory usage % exceeds threshold |
+| `interface_down_count` | Number of down interfaces exceeds threshold |
+| `device_down` | Device becomes unreachable |
+| `temperature_critical` | Any temperature sensor enters critical state |
+
+Each rule supports:
+- **Scope** — apply to all devices or a specific hostname
+- **Cooldown** — minimum minutes between repeat notifications for the same firing event
+- **Email** — optionally send an email to all admins in addition to in-app notifications
+- **Enable/disable** toggle without deleting the rule
+
+Alerts transition through `firing` and `resolved` states. A resolved notification is sent automatically when the condition clears.
+
+---
+
+### Scheduled Config Backups
+
+Navigate to **Admin → Settings → Config Backup** to enable automated running-config capture.
+
+- **Frequency**: daily or weekly
+- **Hour**: UTC hour to run (0–23)
+- **Day of week**: for weekly schedules
+
+Kármán connects to each device via eAPI (SSH fallback), captures `show running-config`, stores it as a configlet (`<hostname>-running-config`), and records the timestamp in the device inventory. The **Last Backup** column on the Devices page shows when each device was last backed up.
+
+---
+
+### Compliance / Drift Detection
+
+Navigate to **Compliance** to see config health across all devices.
+
+| Status | Meaning |
+|--------|---------|
+| `CLEAN` | Running config matches the last known good snapshot |
+| `DRIFT` | Running config has changed since the last backup |
+| `NEVER SYNCED` | Device has never been backed up |
+
+- **Sync Now** — trigger an immediate backup for a single device
+- **View Diff** — display a unified diff between the previous and current snapshots, with added lines highlighted green and removed lines highlighted red
+
+---
+
+### BGP Dashboard
+
+Navigate to **BGP** for a fleet-wide view of all BGP peers across all devices.
+
+- Peers are collected during the background telemetry cycle (~30s)
+- The page falls back to a live query if the cache is cold
+- Filter by device, VRF, or peer state
+- State badges: `Established` (green), `Active` / `Connect` / `OpenSent` (yellow), `Idle` (red)
+
+BGP data is collected via eAPI (`show ip bgp summary vrf all`) for eAPI and SSH-managed devices. gNMI devices fall back to eAPI for BGP collection specifically.
+
+---
+
+### Zero Touch Provisioning (ZTP)
+
+Navigate to **Admin → Zero Touch Provisioning** to configure automatic device onboarding.
+
+**How it works:**
+1. A new Arista switch boots with no startup config and enters ZTP mode
+2. The switch sends a DHCP request; the server returns Option 67 pointing to Kármán's ZTP script URL (`/ztp/script`)
+3. EOS downloads and executes the Python script
+4. The script writes the base config to `/mnt/flash/startup-config` and calls back to `/api/devices/register`
+5. Kármán adds the device to inventory, notifies all admins, and triggers an initial sync
+
+**DHCP options:**
+- **Existing DHCP server** — configure Option 67 to `http://<karman-ip>:5000/ztp/script`
+- **Built-in DHCP** — enable the dnsmasq-backed server directly in the ZTP settings page (requires `dnsmasq` installed and `network_mode: host` in Docker Compose)
+
+**Configurable settings:**
+| Setting | Description |
+|---------|-------------|
+| Kármán Base URL | Used in ZTP script callbacks and DHCP Option 67 |
+| API Key | Optional pre-shared key — scripts without it are rejected |
+| Default credentials | Username/password baked into the generated ZTP script |
+| Default role / site | Applied to auto-registered devices |
+| Default management type | Auto-detect (probes 443/22/6030) or fixed |
+| Base config template | Full EOS config pushed to every new device — supports `{username}`, `{password}`, `{hostname}`, `{ip}`, `{karman_url}` variables |
+| Auto-add | Toggle whether devices register automatically or queue for manual approval |
+
+The **Active Leases** table shows all DHCP leases from the built-in server. Pending devices (leased but not yet registered) have a manual **Register** button.
 
 ---
 
@@ -432,7 +537,13 @@ Flask (web/app.py)  ─── SQLite (custom-cvp.db)
   └── Prometheus API ─── Prometheus ─── gnmic ─── Arista EOS gNMI
 ```
 
-**Background telemetry** runs every ~30 seconds in a daemon thread, caching device status in SQLite. A DB-level lock prevents concurrent polls across gunicorn workers.
+**Background threads** (all daemon threads, DB-level locking to prevent duplicate execution across gunicorn workers):
+
+| Thread | Interval | Purpose |
+|--------|----------|---------|
+| Telemetry loop | ~30s | Collects CPU, memory, interfaces, temperature, BGP per device |
+| Alert loop | ~30s | Evaluates enabled rules against telemetry cache, fires/resolves events |
+| Backup loop | 60s poll | Runs scheduled config backups; checks daily/weekly schedule |
 
 **Monitoring stack** (optional but needed for Metrics tab graphs):
 - `gnmic` — dials out to devices on port 6030, exposes interface metrics on port 9273
@@ -530,6 +641,10 @@ provide its IP and credentials in the UI.
 | Metrics tab shows no data | gnmic not running or wrong target IPs | Check `docker logs karman-gnmic` |
 | 500 error on LLDP | Command returns text instead of JSON | Already handled — update to latest code |
 | SSL handshake timeout | vEOS-lab HTTPS is slow | Automatic HTTP fallback handles this |
+| Compliance sync shows no diff | Config identical to last snapshot | Device is CLEAN — no drift detected |
+| BGP page empty on first load | Cache not yet warm | Wait one telemetry cycle (~30s) or reload |
+| ZTP devices not registering | TerminAttr missing `-allowed-ips=0.0.0.0/0` | Add flag to TerminAttr exec line |
+| Built-in DHCP fails to start | dnsmasq not installed or not host networking | `apt install dnsmasq`; set `network_mode: host` |
 
 ```bash
 # Check all service logs

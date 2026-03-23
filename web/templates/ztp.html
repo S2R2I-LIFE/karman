@@ -1,0 +1,534 @@
+{% extends "base.html" %}
+
+{% block title %}Zero Touch Provisioning — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+  <div class="col-12">
+    <div class="d-flex justify-content-between align-items-start">
+      <div>
+        <h1 class="mb-1 help-title" data-help-key="ztp" onclick="toggleHelpPanel('ztp')">
+          <i class="bi bi-broadcast-pin"></i> Zero Touch Provisioning
+          <i class="bi bi-chevron-down ms-2 help-chev" id="help-chev-ztp"></i>
+        </h1>
+        <div id="help-body-ztp" class="help-body-inline mt-2">
+          <div class="row g-3">
+            <div class="col-md-5">
+              <p class="text-muted"><strong>Zero Touch Provisioning (ZTP)</strong> lets new Arista switches automatically configure themselves and register with Kármán the moment they boot — no manual intervention required.</p>
+              <p class="text-muted">When a switch boots without a startup config, EOS enters ZTP mode, sends a DHCP request, and downloads and executes a script from the URL returned in <strong>DHCP Option 67</strong>. Kármán serves that script and accepts the registration callback.</p>
+            </div>
+            <div class="col-md-7">
+              <div class="row g-2">
+                <div class="col-6">
+                  <div class="help-tip"><i class="bi bi-router text-primary"></i><span><strong>Built-in DHCP</strong> — Kármán can run its own dnsmasq DHCP server. Requires <code>dnsmasq</code> on the host and <code>network_mode: host</code> in Docker Compose.</span></div>
+                  <div class="help-tip"><i class="bi bi-hdd-network text-secondary"></i><span><strong>Existing DHCP</strong> — point your current DHCP server's Option 67 to the ZTP Script URL shown at the top of this page. No built-in DHCP needed.</span></div>
+                  <div class="help-tip"><i class="bi bi-key text-warning"></i><span><strong>API Key</strong> — optional pre-shared key baked into the ZTP script. If set, only scripts with the correct key can register devices.</span></div>
+                </div>
+                <div class="col-6">
+                  <div class="help-tip"><i class="bi bi-file-code text-info"></i><span><strong>Base Config Template</strong> — the EOS config written to every new device. Supports <code>{username}</code>, <code>{password}</code>, <code>{hostname}</code>, <code>{ip}</code>, and <code>{karman_url}</code> variables.</span></div>
+                  <div class="help-tip"><i class="bi bi-magic text-success"></i><span><strong>Auto-Registration</strong> — when a device calls back, Kármán probes its ports, selects the best management type, and adds it to the inventory automatically.</span></div>
+                  <div class="help-tip"><i class="bi bi-list-ul text-secondary"></i><span><strong>Active Leases</strong> — shows all DHCP leases issued by the built-in server. Pending devices can be manually registered from this table.</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ZTP Script URL banner (shown when ZTP is enabled) -->
+<div id="script-url-banner" class="alert alert-info d-flex align-items-center gap-3 mb-4
+     {% if settings.ztp_enabled != 'true' %}d-none{% endif %}" role="alert">
+  <i class="bi bi-link-45deg fs-4"></i>
+  <div class="flex-grow-1">
+    <strong>ZTP Script URL</strong> — point your DHCP server's Option 67 here, or use the
+    built-in DHCP server below.<br>
+    <code id="script-url-text">{{ settings.ztp_karman_url }}/ztp/script</code>
+  </div>
+  <button class="btn btn-sm btn-outline-info flex-shrink-0" onclick="copyScriptUrl()">
+    <i class="bi bi-clipboard"></i> Copy
+  </button>
+</div>
+
+<form method="post" action="{{ url_for('admin_settings_ztp') }}" id="ztp-form">
+
+<!-- ── Row 1: Enable + DHCP ──────────────────────────────────────────────── -->
+<div class="row g-4 mb-4">
+
+  <!-- ZTP Enable -->
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-header"><h5 class="mb-0"><i class="bi bi-toggle-on"></i> ZTP Status</h5></div>
+      <div class="card-body">
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" id="ztp_enabled" name="ztp_enabled"
+                 {% if settings.ztp_enabled == 'true' %}checked{% endif %}
+                 onchange="toggleBanner(this.checked)">
+          <label class="form-check-label fw-semibold" for="ztp_enabled">Enable ZTP</label>
+        </div>
+        <p class="text-muted small mb-3">
+          When enabled, Kármán serves a ZTP script at
+          <code>/ztp/script</code> and accepts device self-registration at
+          <code>/api/devices/register</code>.
+        </p>
+        <div class="mb-3">
+          <label class="form-label">Kármán Base URL</label>
+          <input type="url" class="form-control" name="ztp_karman_url"
+                 value="{{ settings.ztp_karman_url }}"
+                 placeholder="http://192.168.2.38:5000"
+                 oninput="updateScriptUrl(this.value)">
+          <div class="form-text">Used in ZTP script callbacks and DHCP Option 67.</div>
+        </div>
+        <div class="mb-0">
+          <label class="form-label">API Key <span class="text-muted">(optional)</span></label>
+          <input type="text" class="form-control font-monospace" name="ztp_api_key"
+                 value="{{ settings.ztp_api_key }}"
+                 placeholder="Leave blank to allow unauthenticated registration">
+          <div class="form-text">If set, ZTP scripts must include this key to register.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Built-in DHCP -->
+  <div class="col-md-8">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-router"></i> Built-in DHCP Server</h5>
+        <div class="d-flex align-items-center gap-2">
+          {% if not dnsmasq_available %}
+          <span class="badge bg-warning text-dark">dnsmasq not installed</span>
+          {% else %}
+            {% if dhcp_status.running %}
+            <span class="badge bg-success" id="dhcp-status-badge">
+              <i class="bi bi-circle-fill"></i> Running (PID {{ dhcp_status.pid }})
+            </span>
+            {% else %}
+            <span class="badge bg-secondary" id="dhcp-status-badge">
+              <i class="bi bi-circle"></i> Stopped
+            </span>
+            {% endif %}
+          {% endif %}
+          <button type="button" class="btn btn-sm btn-success" id="dhcp-start-btn"
+                  onclick="dhcpAction('start')"
+                  {% if not dnsmasq_available or dhcp_status.running %}disabled{% endif %}>
+            <i class="bi bi-play-fill"></i> Start
+          </button>
+          <button type="button" class="btn btn-sm btn-danger" id="dhcp-stop-btn"
+                  onclick="dhcpAction('stop')"
+                  {% if not dnsmasq_available or not dhcp_status.running %}disabled{% endif %}>
+            <i class="bi bi-stop-fill"></i> Stop
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" id="ztp_dhcp_enabled"
+                 name="ztp_dhcp_enabled"
+                 {% if settings.ztp_dhcp_enabled == 'true' %}checked{% endif %}>
+          <label class="form-check-label fw-semibold" for="ztp_dhcp_enabled">
+            Use built-in DHCP server
+          </label>
+          <div class="form-text">
+            Requires <code>dnsmasq</code> installed on the host and
+            <code>network_mode: host</code> in Docker Compose.
+          </div>
+        </div>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label">Interface</label>
+            <select class="form-select" name="ztp_dhcp_interface">
+              {% for iface in interfaces %}
+              <option value="{{ iface }}"
+                {% if settings.ztp_dhcp_interface == iface %}selected{% endif %}>
+                {{ iface }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Subnet Mask</label>
+            <input type="text" class="form-control" name="ztp_dhcp_netmask"
+                   value="{{ settings.ztp_dhcp_netmask }}" placeholder="255.255.255.0">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Lease Time</label>
+            <input type="text" class="form-control" name="ztp_dhcp_lease_time"
+                   value="{{ settings.ztp_dhcp_lease_time }}" placeholder="24h">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Range Start</label>
+            <input type="text" class="form-control" name="ztp_dhcp_range_start"
+                   value="{{ settings.ztp_dhcp_range_start }}" placeholder="192.168.2.100">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Range End</label>
+            <input type="text" class="form-control" name="ztp_dhcp_range_end"
+                   value="{{ settings.ztp_dhcp_range_end }}" placeholder="192.168.2.200">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Default Gateway</label>
+            <input type="text" class="form-control" name="ztp_dhcp_gateway"
+                   value="{{ settings.ztp_dhcp_gateway }}" placeholder="192.168.2.1">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">DNS Server</label>
+            <input type="text" class="form-control" name="ztp_dhcp_dns"
+                   value="{{ settings.ztp_dhcp_dns }}" placeholder="8.8.8.8">
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Row 2: Credentials + Auto-Registration ────────────────────────────── -->
+<div class="row g-4 mb-4">
+
+  <!-- Default credentials -->
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-person-lock"></i> Default Credentials</h5>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small">
+          Baked into the generated ZTP script and used when auto-registering devices.
+        </p>
+        <div class="mb-3">
+          <label class="form-label">Username</label>
+          <input type="text" class="form-control" name="ztp_default_username"
+                 value="{{ settings.ztp_default_username }}" placeholder="admin">
+        </div>
+        <div class="mb-0">
+          <label class="form-label">Password</label>
+          <div class="input-group">
+            <input type="password" class="form-control" id="ztp_password"
+                   name="ztp_default_password" value="{{ settings.ztp_default_password }}">
+            <button class="btn btn-outline-secondary" type="button"
+                    onclick="togglePw()">
+              <i class="bi bi-eye" id="pw-eye"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Auto-registration settings -->
+  <div class="col-md-8">
+    <div class="card h-100">
+      <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-magic"></i> Auto-Registration Settings</h5>
+      </div>
+      <div class="card-body">
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" id="ztp_auto_add"
+                 name="ztp_auto_add"
+                 {% if settings.ztp_auto_add == 'true' %}checked{% endif %}>
+          <label class="form-check-label fw-semibold" for="ztp_auto_add">
+            Automatically add devices to inventory
+          </label>
+          <div class="form-text">
+            When disabled, registrations are accepted but must be manually approved before
+            the device appears in the inventory.
+          </div>
+        </div>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label">Default Role</label>
+            <select class="form-select" name="ztp_default_role">
+              {% for role in ['leaf', 'spine', 'border', 'core', 'access'] %}
+              <option value="{{ role }}"
+                {% if settings.ztp_default_role == role %}selected{% endif %}>
+                {{ role | capitalize }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Default Site</label>
+            <input type="text" class="form-control" name="ztp_default_site"
+                   value="{{ settings.ztp_default_site }}" placeholder="e.g. DC1">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Default Management Type</label>
+            <select class="form-select" name="ztp_default_mgmt_type">
+              <option value="auto"
+                {% if settings.ztp_default_mgmt_type == 'auto' %}selected{% endif %}>
+                Auto-detect
+              </option>
+              <option value="eapi"
+                {% if settings.ztp_default_mgmt_type == 'eapi' %}selected{% endif %}>
+                eAPI (HTTPS)
+              </option>
+              <option value="ssh"
+                {% if settings.ztp_default_mgmt_type == 'ssh' %}selected{% endif %}>
+                SSH
+              </option>
+              <option value="gnmi"
+                {% if settings.ztp_default_mgmt_type == 'gnmi' %}selected{% endif %}>
+                gNMI / TerminAttr
+              </option>
+            </select>
+            <div class="form-text">Auto-detect probes ports 443, 22, and 6030.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Row 3: Base Config Template ───────────────────────────────────────── -->
+<div class="row g-4 mb-4">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-file-code"></i> Base Config Template</h5>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-sm btn-outline-secondary"
+                  onclick="resetBaseConfig()">
+            <i class="bi bi-arrow-counterclockwise"></i> Reset to Default
+          </button>
+          <a href="{{ url_for('ztp_script') }}" target="_blank"
+             class="btn btn-sm btn-outline-info">
+            <i class="bi bi-download"></i> Preview Script
+          </a>
+        </div>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-2">
+          This config is written to <code>/mnt/flash/startup-config</code> on each new device.
+          Available variables:
+          <code>{username}</code> <code>{password}</code> <code>{hostname}</code>
+          <code>{ip}</code> <code>{karman_url}</code>
+        </p>
+        <textarea class="form-control font-monospace"
+                  name="ztp_base_config"
+                  id="base-config-textarea"
+                  rows="18"
+                  spellcheck="false"
+                  style="font-size:0.82rem; resize:vertical;">{{ settings.ztp_base_config }}</textarea>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Save button -->
+<div class="row mb-5">
+  <div class="col-12 d-flex justify-content-end gap-2">
+    <a href="{{ url_for('ztp_settings') }}" class="btn btn-secondary">Cancel</a>
+    <button type="submit" class="btn btn-primary">
+      <i class="bi bi-floppy"></i> Save ZTP Settings
+    </button>
+  </div>
+</div>
+
+</form>
+
+<!-- ── Active Leases ─────────────────────────────────────────────────────── -->
+<div class="row mb-4">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-list-ul"></i> Active DHCP Leases</h5>
+        <button class="btn btn-sm btn-outline-secondary" onclick="refreshLeases()">
+          <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover mb-0" id="leases-table">
+            <thead>
+              <tr>
+                <th>MAC Address</th>
+                <th>IP Address</th>
+                <th>Hostname</th>
+                <th>First Seen</th>
+                <th>Last Seen</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="leases-body">
+              {% for lease in leases %}
+              <tr>
+                <td class="font-monospace small">{{ lease.mac_address }}</td>
+                <td>{{ lease.ip_address }}</td>
+                <td>{{ lease.hostname or '—' }}</td>
+                <td class="text-muted small">{{ lease.first_seen | int | timeago if lease.first_seen else '—' }}</td>
+                <td class="text-muted small">{{ lease.last_seen  | int | timeago if lease.last_seen  else '—' }}</td>
+                <td>
+                  {% if lease.registered %}
+                  <span class="badge bg-success">
+                    <i class="bi bi-check-circle"></i> Registered
+                  </span>
+                  {% else %}
+                  <span class="badge bg-warning text-dark">
+                    <i class="bi bi-hourglass-split"></i> Pending
+                  </span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if not lease.registered and lease.ip_address and lease.hostname %}
+                  <button class="btn btn-sm btn-outline-primary"
+                          onclick="manualRegister('{{ lease.hostname }}', '{{ lease.ip_address }}', '{{ lease.mac_address }}')">
+                    <i class="bi bi-plus-circle"></i> Register
+                  </button>
+                  {% elif lease.device_hostname %}
+                  <a href="{{ url_for('device_detail', hostname=lease.device_hostname) }}"
+                     class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-box-arrow-up-right"></i> View
+                  </a>
+                  {% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr id="no-leases-row">
+                <td colspan="7" class="text-center text-muted py-4">
+                  No DHCP leases yet. Start the built-in DHCP server or connect a device.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:1100">
+  <div id="ztp-toast" class="toast align-items-center border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body" id="ztp-toast-body"></div>
+      <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const DEFAULT_BASE_CONFIG = {{ settings.ztp_base_config | tojson }};
+
+function showToast(msg, ok = true) {
+  const t = document.getElementById('ztp-toast');
+  t.className = `toast align-items-center border-0 text-bg-${ok ? 'success' : 'danger'}`;
+  document.getElementById('ztp-toast-body').textContent = msg;
+  bootstrap.Toast.getOrCreateInstance(t, {delay: 4000}).show();
+}
+
+function toggleBanner(enabled) {
+  document.getElementById('script-url-banner').classList.toggle('d-none', !enabled);
+}
+
+function updateScriptUrl(base) {
+  const url = (base || '').replace(/\/$/, '') + '/ztp/script';
+  document.getElementById('script-url-text').textContent = url;
+}
+
+function copyScriptUrl() {
+  const url = document.getElementById('script-url-text').textContent;
+  navigator.clipboard.writeText(url).then(() => showToast('URL copied to clipboard'));
+}
+
+function togglePw() {
+  const inp = document.getElementById('ztp_password');
+  const eye = document.getElementById('pw-eye');
+  if (inp.type === 'password') {
+    inp.type = 'text';
+    eye.className = 'bi bi-eye-slash';
+  } else {
+    inp.type = 'password';
+    eye.className = 'bi bi-eye';
+  }
+}
+
+function resetBaseConfig() {
+  if (confirm('Reset base config to the Kármán default? Your changes will be lost.')) {
+    document.getElementById('base-config-textarea').value = DEFAULT_BASE_CONFIG;
+  }
+}
+
+// DHCP start/stop
+function dhcpAction(action) {
+  const startBtn = document.getElementById('dhcp-start-btn');
+  const stopBtn  = document.getElementById('dhcp-stop-btn');
+  const badge    = document.getElementById('dhcp-status-badge');
+  [startBtn, stopBtn].forEach(b => b.disabled = true);
+
+  fetch(`/admin/ztp/dhcp/${action}`, {method: 'POST'})
+    .then(r => r.json())
+    .then(data => {
+      showToast(data.message, data.success);
+      if (data.success) {
+        const running = action === 'start';
+        badge.className = `badge bg-${running ? 'success' : 'secondary'}`;
+        badge.innerHTML = running
+          ? '<i class="bi bi-circle-fill"></i> Running'
+          : '<i class="bi bi-circle"></i> Stopped';
+        startBtn.disabled =  running;
+        stopBtn.disabled  = !running;
+      } else {
+        startBtn.disabled = false;
+        stopBtn.disabled  = false;
+      }
+    })
+    .catch(e => { showToast('Request failed: ' + e, false); });
+}
+
+// Refresh leases table
+function refreshLeases() {
+  fetch('/api/ztp/leases')
+    .then(r => r.json())
+    .then(leases => {
+      const tbody = document.getElementById('leases-body');
+      if (!leases.length) {
+        tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">
+          No DHCP leases yet.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = leases.map(l => `
+        <tr>
+          <td class="font-monospace small">${l.mac_address}</td>
+          <td>${l.ip_address || '—'}</td>
+          <td>${l.hostname || '—'}</td>
+          <td class="text-muted small">${l.first_seen ? new Date(l.first_seen*1000).toLocaleString() : '—'}</td>
+          <td class="text-muted small">${l.last_seen  ? new Date(l.last_seen *1000).toLocaleString() : '—'}</td>
+          <td>${l.registered
+            ? '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Registered</span>'
+            : '<span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split"></i> Pending</span>'}</td>
+          <td>${!l.registered && l.ip_address && l.hostname
+            ? `<button class="btn btn-sm btn-outline-primary"
+                onclick="manualRegister('${l.hostname}','${l.ip_address}','${l.mac_address}')">
+                <i class="bi bi-plus-circle"></i> Register</button>`
+            : l.device_hostname
+              ? `<a href="/devices/${l.device_hostname}" class="btn btn-sm btn-outline-secondary">
+                  <i class="bi bi-box-arrow-up-right"></i> View</a>`
+              : ''}</td>
+        </tr>`).join('');
+    })
+    .catch(e => showToast('Failed to refresh leases: ' + e, false));
+}
+
+// Manual register a pending lease
+function manualRegister(hostname, ip, mac) {
+  if (!confirm(`Register ${hostname} (${ip}) in Kármán?`)) return;
+  fetch('/api/devices/register', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({hostname, ip, mac, source: 'manual'}),
+  })
+  .then(r => r.json())
+  .then(data => {
+    showToast(data.message, data.success);
+    if (data.success) setTimeout(refreshLeases, 800);
+  })
+  .catch(e => showToast('Registration failed: ' + e, false));
+}
+</script>
+{% endblock %}

@@ -1,33 +1,23 @@
 # Kármán Requirements
+# Last updated: 2026-03-23
 
-# Core dependencies
-Jinja2>=3.0.0
-PyYAML>=6.0
-jsonschema>=4.0.0
+# ── Core ──────────────────────────────────────────────────────────────────────
+Jinja2>=3.1.6
+PyYAML>=6.0.3
+jsonschema>=4.26.0
 
-# Device connectivity
-pyeapi>=0.8.4
-netmiko>=4.0.0
-cvprac>=1.3.0
-pygnmi>=0.8.0
+# ── Device connectivity ────────────────────────────────────────────────────────
+pyeapi>=1.0.4
+netmiko>=4.6.0
+cvprac>=1.4.2
+pygnmi>=0.8.15
 
-# Web interface (REQUIRED for GUI)
-flask>=2.0.0
-flask-login>=0.6.0
-gunicorn>=20.1.0
+# ── Web interface ──────────────────────────────────────────────────────────────
+Flask>=3.1.3
+flask-login>=0.6.3
+gunicorn>=25.1.0
 
-# Optional: Task scheduling
-celery>=5.0.0
-redis>=4.0.0
-
-# Optional: API
-fastapi>=0.70.0
-uvicorn>=0.15.0
-
-# Optional: Git integration
-GitPython>=3.1.0
-
-# Development dependencies
+# ── Development / testing ─────────────────────────────────────────────────────
 pytest>=7.0.0
 pytest-cov>=3.0.0
 black>=22.0.0

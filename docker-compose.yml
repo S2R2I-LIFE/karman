@@ -67,7 +67,7 @@ services:
   # ── gnmic — gNMI streaming collector (dial-in / pull) ────────────────────
   # Connects OUT to each device on port 6030 and subscribes to eos_native paths.
   gnmic:
-    image: ghcr.io/openconfig/gnmic:latest
+    image: ghcr.io/openconfig/gnmic:v0.45.0
     container_name: karman-gnmic
     restart: unless-stopped
     network_mode: host
@@ -93,7 +93,7 @@ services:
   # -cvgnmicgrpcurl=<karman-ip>:9910 flag.  Exposes received metrics on
   # port 9274 for Prometheus to scrape (separate from the dial-in gnmic).
   gnmic-listener:
-    image: ghcr.io/openconfig/gnmic:latest
+    image: ghcr.io/openconfig/gnmic:v0.45.0
     container_name: karman-gnmic-listener
     restart: unless-stopped
     network_mode: host
@@ -114,7 +114,7 @@ services:
 
   # ── Prometheus — time-series database ────────────────────────────────────
   prometheus:
-    image: prom/prometheus:v3.2.1
+    image: prom/prometheus:v3.10.0
     container_name: karman-prometheus
     restart: unless-stopped
     network_mode: host

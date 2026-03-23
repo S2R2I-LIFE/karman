@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+
+{% block title %}Alert Rules - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+  <!-- Alert Rules Card -->
+  <div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h5 class="mb-0"><i class="bi bi-bell-fill me-2 text-warning"></i>Alert Rules</h5>
+      <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#newRuleModal">
+        <i class="bi bi-plus-lg me-1"></i>New Rule
+      </button>
+    </div>
+    <div class="card-body p-0">
+      {% if rules %}
+      <div class="table-responsive">
+        <table class="table table-hover table-striped mb-0 align-middle">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Scope</th>
+              <th>Threshold</th>
+              <th>Cooldown</th>
+              <th>Email</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rule in rules %}
+            <tr>
+              <td>{{ rule.rule_name }}</td>
+              <td><code>{{ rule.alert_type }}</code></td>
+              <td>{{ rule.scope }}</td>
+              <td>{{ rule.threshold if rule.threshold is not none else '—' }}</td>
+              <td>{{ rule.cooldown_minutes }} min</td>
+              <td>
+                {% if rule.send_email %}
+                  <i class="bi bi-envelope-check-fill text-success"></i>
+                {% else %}
+                  <i class="bi bi-envelope-x text-secondary"></i>
+                {% endif %}
+              </td>
+              <td>
+                {% if rule.is_enabled %}
+                  <span class="badge bg-success">Enabled</span>
+                {% else %}
+                  <span class="badge bg-secondary">Disabled</span>
+                {% endif %}
+              </td>
+              <td>
+                <div class="btn-group btn-group-sm" role="group">
+                  <button class="btn btn-outline-secondary"
+                    onclick="openEditModal(
+                      {{ rule.rule_id }},
+                      {{ rule.rule_name | tojson }},
+                      {{ rule.alert_type | tojson }},
+                      {{ rule.threshold | tojson }},
+                      {{ rule.scope | tojson }},
+                      {{ rule.cooldown_minutes }},
+                      {{ rule.send_email | tojson }}
+                    )">
+                    <i class="bi bi-pencil"></i>
+                  </button>
+                  <button class="btn btn-outline-{{ 'warning' if rule.is_enabled else 'success' }}"
+                    onclick="toggleRule({{ rule.rule_id }})"
+                    title="{{ 'Disable' if rule.is_enabled else 'Enable' }}">
+                    <i class="bi bi-{{ 'pause-fill' if rule.is_enabled else 'play-fill' }}"></i>
+                  </button>
+                  <form method="post" action="/admin/alerts/{{ rule.rule_id }}/delete"
+                    onsubmit="return confirm('Delete rule &quot;{{ rule.rule_name }}&quot;?')"
+                    class="d-inline">
+                    <button type="submit" class="btn btn-outline-danger">
+                      <i class="bi bi-trash"></i>
+                    </button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center text-muted py-5">
+        <i class="bi bi-bell-slash fs-2 d-block mb-2"></i>
+        No alert rules defined. Click <strong>New Rule</strong> to create one.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Recent Events Card -->
+  <div class="card">
+    <div class="card-header">
+      <h5 class="mb-0"><i class="bi bi-activity me-2 text-info"></i>Recent Events</h5>
+    </div>
+    <div class="card-body p-0">
+      {% if events %}
+      <div class="table-responsive">
+        <table class="table table-hover table-striped mb-0 align-middle">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Rule</th>
+              <th>Device</th>
+              <th>Status</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for event in events %}
+            <tr>
+              <td class="text-nowrap fmtts" data-ts="{{ event.triggered_at }}">{{ event.triggered_at }}</td>
+              <td>{{ rule_map.get(event.rule_id, event.rule_id) }}</td>
+              <td>{{ event.hostname }}</td>
+              <td>
+                {% if event.status == 'firing' %}
+                  <span class="badge bg-danger">Firing</span>
+                {% elif event.status == 'resolved' %}
+                  <span class="badge bg-success">Resolved</span>
+                {% else %}
+                  <span class="badge bg-secondary">{{ event.status }}</span>
+                {% endif %}
+              </td>
+              <td>{{ event.value if event.value is not none else '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center text-muted py-5">
+        <i class="bi bi-calendar-x fs-2 d-block mb-2"></i>
+        No alert events recorded yet.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+<!-- New Rule Modal -->
+<div class="modal fade" id="newRuleModal" tabindex="-1" aria-labelledby="newRuleModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="/admin/alerts/create">
+        <div class="modal-header">
+          <h5 class="modal-title" id="newRuleModalLabel">New Alert Rule</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="new_rule_name" class="form-label">Rule Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="new_rule_name" name="rule_name" required placeholder="e.g. High CPU Alert">
+          </div>
+          <div class="mb-3">
+            <label for="new_alert_type" class="form-label">Alert Type <span class="text-danger">*</span></label>
+            <select class="form-select" id="new_alert_type" name="alert_type" required>
+              <option value="" disabled selected>Select type…</option>
+              <option value="cpu">CPU Usage</option>
+              <option value="memory">Memory Usage</option>
+              <option value="interface_down_count">Interface Down Count</option>
+              <option value="device_down">Device Down</option>
+              <option value="temperature_critical">Temperature Critical</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label for="new_scope" class="form-label">Scope</label>
+            <input type="text" class="form-control" id="new_scope" name="scope" value="all" placeholder="all, or hostname/site">
+            <div class="form-text">Use <code>all</code> to match every device, or enter a hostname or site name.</div>
+          </div>
+          <div class="mb-3">
+            <label for="new_threshold" class="form-label">Threshold</label>
+            <input type="number" class="form-control" id="new_threshold" name="threshold" step="any" placeholder="Leave blank if not applicable">
+          </div>
+          <div class="mb-3">
+            <label for="new_cooldown" class="form-label">Cooldown (minutes)</label>
+            <input type="number" class="form-control" id="new_cooldown" name="cooldown_minutes" min="1" value="60">
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="new_send_email" name="send_email" value="1">
+            <label class="form-check-label" for="new_send_email">Send Email Notification</label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Rule</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Rule Modal -->
+<div class="modal fade" id="editRuleModal" tabindex="-1" aria-labelledby="editRuleModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="editRuleModalLabel">Edit Alert Rule</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="edit_rule_id">
+        <div class="mb-3">
+          <label for="edit_rule_name" class="form-label">Rule Name <span class="text-danger">*</span></label>
+          <input type="text" class="form-control" id="edit_rule_name" required>
+        </div>
+        <div class="mb-3">
+          <label for="edit_alert_type" class="form-label">Alert Type <span class="text-danger">*</span></label>
+          <select class="form-select" id="edit_alert_type" required>
+            <option value="cpu">CPU Usage</option>
+            <option value="memory">Memory Usage</option>
+            <option value="interface_down_count">Interface Down Count</option>
+            <option value="device_down">Device Down</option>
+            <option value="temperature_critical">Temperature Critical</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label for="edit_scope" class="form-label">Scope</label>
+          <input type="text" class="form-control" id="edit_scope">
+          <div class="form-text">Use <code>all</code> to match every device, or enter a hostname or site name.</div>
+        </div>
+        <div class="mb-3">
+          <label for="edit_threshold" class="form-label">Threshold</label>
+          <input type="number" class="form-control" id="edit_threshold" step="any" placeholder="Leave blank if not applicable">
+        </div>
+        <div class="mb-3">
+          <label for="edit_cooldown" class="form-label">Cooldown (minutes)</label>
+          <input type="number" class="form-control" id="edit_cooldown" min="1">
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="edit_send_email">
+          <label class="form-check-label" for="edit_send_email">Send Email Notification</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="submitEditForm()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Format Unix timestamp floats in the events table
+  document.querySelectorAll('.fmtts').forEach(td => {
+    const ts = parseFloat(td.dataset.ts);
+    if (!isNaN(ts)) {
+      td.textContent = new Date(ts * 1000).toLocaleString();
+    }
+  });
+
+  function toggleRule(ruleId) {
+    fetch(`/admin/alerts/${ruleId}/toggle`, { method: 'POST' })
+      .then(r => {
+        if (!r.ok) throw new Error('Toggle failed');
+        location.reload();
+      })
+      .catch(err => alert('Error toggling rule: ' + err.message));
+  }
+
+  function openEditModal(ruleId, name, type, threshold, scope, cooldown, sendEmail) {
+    document.getElementById('edit_rule_id').value = ruleId;
+    document.getElementById('edit_rule_name').value = name;
+    document.getElementById('edit_alert_type').value = type;
+    document.getElementById('edit_threshold').value = threshold !== null ? threshold : '';
+    document.getElementById('edit_scope').value = scope;
+    document.getElementById('edit_cooldown').value = cooldown;
+    document.getElementById('edit_send_email').checked = !!sendEmail;
+    new bootstrap.Modal(document.getElementById('editRuleModal')).show();
+  }
+
+  function submitEditForm() {
+    const ruleId = document.getElementById('edit_rule_id').value;
+    const thresholdVal = document.getElementById('edit_threshold').value;
+    const payload = {
+      rule_name: document.getElementById('edit_rule_name').value,
+      alert_type: document.getElementById('edit_alert_type').value,
+      scope: document.getElementById('edit_scope').value,
+      threshold: thresholdVal !== '' ? parseFloat(thresholdVal) : null,
+      cooldown_minutes: parseInt(document.getElementById('edit_cooldown').value, 10),
+      send_email: document.getElementById('edit_send_email').checked
+    };
+    fetch(`/admin/alerts/${ruleId}/edit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(r => {
+      if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Save failed'); });
+      location.reload();
+    })
+    .catch(err => alert('Error saving rule: ' + err.message));
+  }
+</script>
+{% endblock %}

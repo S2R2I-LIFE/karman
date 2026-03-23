@@ -1,0 +1,424 @@
+{% extends "base.html" %}
+
+{% block title %}Compliance - {{ app_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* Diff color coding */
+.diff-line-add {
+    color: #3fb950;
+}
+.diff-line-remove {
+    color: #f85149;
+}
+.diff-line-hunk {
+    color: #58a6ff;
+}
+.diff-line-meta {
+    color: #8b949e;
+}
+
+/* Diff pre block */
+#diff-content {
+    background-color: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 1rem;
+    white-space: pre;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+[data-bs-theme="light"] #diff-content {
+    background-color: #f6f8fa;
+    border-color: #d0d7de;
+}
+
+/* Stat cards */
+.stat-card {
+    border-radius: 10px;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+}
+.stat-number {
+    font-size: 2.2rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+/* Table tweaks */
+.compliance-table th {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.hash-mono {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.8rem;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Page Header -->
+<div class="row mb-4">
+    <div class="col-12">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item">
+                    <a href="{{ url_for('dashboard') }}"><i class="bi bi-speedometer2"></i> Dashboard</a>
+                </li>
+                <li class="breadcrumb-item active" aria-current="page">Config Compliance</li>
+            </ol>
+        </nav>
+        <h1 class="mb-1">
+            <i class="bi bi-shield-check"></i> Config Compliance
+        </h1>
+        <p class="text-muted mb-0">Track running-config backups and detect configuration drift across your network.</p>
+    </div>
+</div>
+
+<!-- Summary Bar -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card stat-card border-0 bg-body-secondary h-100">
+            <div class="card-body text-center py-3">
+                <div class="stat-number text-body mb-1">{{ total }}</div>
+                <div class="text-muted small"><i class="bi bi-hdd-network me-1"></i>Total Devices</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card stat-card border-0 border-success h-100" style="border-left: 4px solid #198754 !important;">
+            <div class="card-body text-center py-3">
+                <div class="stat-number text-success mb-1">{{ clean }}</div>
+                <div class="text-muted small"><i class="bi bi-check-circle me-1"></i>Clean</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card stat-card border-0 border-warning h-100" style="border-left: 4px solid #fd7e14 !important;">
+            <div class="card-body text-center py-3">
+                <div class="stat-number text-warning mb-1">{{ drift }}</div>
+                <div class="text-muted small"><i class="bi bi-exclamation-triangle me-1"></i>Drift Detected</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card stat-card border-0 bg-body-secondary h-100">
+            <div class="card-body text-center py-3">
+                <div class="stat-number text-secondary mb-1">{{ never_synced }}</div>
+                <div class="text-muted small"><i class="bi bi-dash-circle me-1"></i>Never Synced</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Devices Table -->
+<div class="row">
+    <div class="col-12">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header d-flex align-items-center justify-content-between">
+                <span class="fw-semibold"><i class="bi bi-table me-2"></i>Device Compliance Status</span>
+                <span class="text-muted small">{{ devices | length }} device{{ 's' if devices | length != 1 else '' }}</span>
+            </div>
+            <div class="card-body p-0">
+                {% if devices %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 compliance-table">
+                        <thead class="table-dark">
+                            <tr>
+                                <th class="ps-3">Hostname</th>
+                                <th>Status</th>
+                                <th>Last Backup</th>
+                                <th>Config Hash</th>
+                                <th class="text-end pe-3">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for device in devices %}
+                            <tr>
+                                <td class="ps-3 fw-semibold">
+                                    <a href="{{ url_for('device_detail', hostname=device.hostname) }}"
+                                       class="text-decoration-none">
+                                        <i class="bi bi-hdd-network me-1 text-muted"></i>{{ device.hostname }}
+                                    </a>
+                                </td>
+                                <td>
+                                    {% if device.status == 'CLEAN' %}
+                                        <span class="badge bg-success">
+                                            <i class="bi bi-check-circle me-1"></i>CLEAN
+                                        </span>
+                                    {% elif device.status == 'DRIFT' %}
+                                        <span class="badge bg-warning" style="color: #1a1200 !important;">
+                                            <i class="bi bi-exclamation-triangle me-1"></i>DRIFT
+                                        </span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">
+                                            <i class="bi bi-question-circle me-1"></i>UNKNOWN
+                                        </span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if device.last_backup_at %}
+                                        <span class="text-muted small" title="{{ device.last_backup_at }}">
+                                            <i class="bi bi-clock me-1"></i>
+                                            <span class="timeago" data-ts="{{ device.last_backup_at }}">{{ device.last_backup_at }}</span>
+                                        </span>
+                                    {% else %}
+                                        <span class="text-muted small">
+                                            <i class="bi bi-dash me-1"></i>Never
+                                        </span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if device.config_hash %}
+                                        <code class="hash-mono text-muted">{{ device.config_hash[:8] }}</code>
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end pe-3">
+                                    <div class="btn-group btn-group-sm" role="group">
+                                        <button type="button"
+                                                class="btn btn-outline-primary"
+                                                onclick="syncDevice('{{ device.hostname }}', this)"
+                                                title="Sync running config now">
+                                            <i class="bi bi-arrow-clockwise"></i> Sync Now
+                                        </button>
+                                        <button type="button"
+                                                class="btn btn-outline-secondary"
+                                                onclick="viewDiff('{{ device.hostname }}')"
+                                                {% if not device.last_backup_at %}disabled title="No backup available"{% else %}title="View config diff"{% endif %}>
+                                            <i class="bi bi-file-diff"></i> View Diff
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-shield display-4 d-block mb-3"></i>
+                    <p class="mb-0">No devices found in inventory.</p>
+                    <a href="{{ url_for('devices') }}" class="btn btn-sm btn-outline-primary mt-3">
+                        <i class="bi bi-plus-circle"></i> Add Devices
+                    </a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Diff Modal -->
+<div class="modal fade" id="diffModal" tabindex="-1" aria-labelledby="diffModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="diffModalLabel">
+                    <i class="bi bi-file-diff me-2"></i>Config Diff — <span id="diff-hostname"></span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Loading spinner -->
+                <div id="diff-loading" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="text-muted mt-2 mb-0">Fetching diff…</p>
+                </div>
+                <!-- No diff message -->
+                <div id="diff-no-change" class="d-none">
+                    <div class="alert alert-success d-flex align-items-center mb-0">
+                        <i class="bi bi-check-circle-fill me-2"></i>
+                        No differences detected — running config matches the stored backup.
+                    </div>
+                </div>
+                <!-- Error message -->
+                <div id="diff-error" class="d-none">
+                    <div class="alert alert-danger d-flex align-items-center mb-0" id="diff-error-msg">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                        <span>Failed to retrieve diff.</span>
+                    </div>
+                </div>
+                <!-- Diff content -->
+                <div id="diff-result" class="d-none">
+                    <div class="d-flex gap-3 mb-2 small">
+                        <span class="diff-line-add"><i class="bi bi-plus-square me-1"></i>Added lines</span>
+                        <span class="diff-line-remove"><i class="bi bi-dash-square me-1"></i>Removed lines</span>
+                        <span class="diff-line-hunk"><i class="bi bi-at me-1"></i>Hunk headers</span>
+                    </div>
+                    <pre id="diff-content"></pre>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Sync Toast -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1100;">
+    <div id="syncToast" class="toast align-items-center border-0" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="d-flex">
+            <div class="toast-body" id="syncToastMsg">
+                Sync triggered successfully.
+            </div>
+            <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// ─── Time-ago formatter ───────────────────────────────────────────────────────
+(function formatTimeago() {
+    document.querySelectorAll('.timeago[data-ts]').forEach(function(el) {
+        const raw = el.getAttribute('data-ts');
+        if (!raw) return;
+        try {
+            const d = new Date(raw);
+            if (isNaN(d.getTime())) return;
+            const diffMs = Date.now() - d.getTime();
+            const diffSec = Math.floor(diffMs / 1000);
+            let label;
+            if (diffSec < 60) {
+                label = 'just now';
+            } else if (diffSec < 3600) {
+                const m = Math.floor(diffSec / 60);
+                label = m + ' minute' + (m !== 1 ? 's' : '') + ' ago';
+            } else if (diffSec < 86400) {
+                const h = Math.floor(diffSec / 3600);
+                label = h + ' hour' + (h !== 1 ? 's' : '') + ' ago';
+            } else {
+                const days = Math.floor(diffSec / 86400);
+                label = days + ' day' + (days !== 1 ? 's' : '') + ' ago';
+            }
+            el.textContent = label;
+        } catch(e) {
+            // leave as-is if parse fails
+        }
+    });
+})();
+
+// ─── Sync device ─────────────────────────────────────────────────────────────
+function syncDevice(hostname, btn) {
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Syncing…';
+
+    fetch('/api/compliance/' + encodeURIComponent(hostname) + '/sync', {
+        method: 'POST'
+    })
+    .then(function(resp) {
+        return resp.json().then(function(data) {
+            return { ok: resp.ok, data: data };
+        });
+    })
+    .then(function(result) {
+        const toast = document.getElementById('syncToast');
+        const toastMsg = document.getElementById('syncToastMsg');
+        if (result.ok && result.data.success) {
+            toast.classList.remove('bg-danger', 'text-white');
+            toast.classList.add('bg-success', 'text-white');
+            toastMsg.textContent = hostname + ' synced successfully.'
+                + (result.data.drifted ? ' Drift detected.' : '');
+            const bsToast = new bootstrap.Toast(toast, { delay: 3000 });
+            bsToast.show();
+            setTimeout(function() { location.reload(); }, 1500);
+        } else {
+            toast.classList.remove('bg-success');
+            toast.classList.add('bg-danger', 'text-white');
+            toastMsg.textContent = 'Sync failed for ' + hostname + ': '
+                + (result.data.error || 'Unknown error');
+            const bsToast = new bootstrap.Toast(toast, { delay: 8000 });
+            bsToast.show();
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+        }
+    })
+    .catch(function(err) {
+        const toast = document.getElementById('syncToast');
+        const toastMsg = document.getElementById('syncToastMsg');
+        toast.classList.remove('bg-success');
+        toast.classList.add('bg-danger', 'text-white');
+        toastMsg.textContent = 'Network error syncing ' + hostname + ': ' + err.message;
+        const bsToast = new bootstrap.Toast(toast, { delay: 5000 });
+        bsToast.show();
+        btn.disabled = false;
+        btn.innerHTML = origHtml;
+    });
+}
+
+// ─── View diff ───────────────────────────────────────────────────────────────
+function viewDiff(hostname) {
+    // Reset modal state
+    document.getElementById('diff-hostname').textContent = hostname;
+    document.getElementById('diff-loading').classList.remove('d-none');
+    document.getElementById('diff-no-change').classList.add('d-none');
+    document.getElementById('diff-error').classList.add('d-none');
+    document.getElementById('diff-result').classList.add('d-none');
+    document.getElementById('diff-content').innerHTML = '';
+
+    const modal = new bootstrap.Modal(document.getElementById('diffModal'));
+    modal.show();
+
+    fetch('/api/compliance/' + encodeURIComponent(hostname) + '/diff')
+    .then(function(resp) {
+        return resp.json().then(function(data) {
+            return { ok: resp.ok, data: data };
+        });
+    })
+    .then(function(result) {
+        document.getElementById('diff-loading').classList.add('d-none');
+        if (!result.ok) {
+            const errEl = document.getElementById('diff-error');
+            errEl.querySelector('span').textContent = result.data.error || 'Failed to retrieve diff.';
+            errEl.classList.remove('d-none');
+            return;
+        }
+        if (!result.data.has_diff) {
+            document.getElementById('diff-no-change').classList.remove('d-none');
+            return;
+        }
+        const lines = (result.data.diff || '').split('\n');
+        const pre = document.getElementById('diff-content');
+        const fragment = document.createDocumentFragment();
+        lines.forEach(function(line) {
+            const span = document.createElement('span');
+            span.textContent = line + '\n';
+            if (line.startsWith('+++') || line.startsWith('---')) {
+                span.className = 'diff-line-meta';
+            } else if (line.startsWith('+')) {
+                span.className = 'diff-line-add';
+            } else if (line.startsWith('-')) {
+                span.className = 'diff-line-remove';
+            } else if (line.startsWith('@')) {
+                span.className = 'diff-line-hunk';
+            }
+            fragment.appendChild(span);
+        });
+        pre.appendChild(fragment);
+        document.getElementById('diff-result').classList.remove('d-none');
+    })
+    .catch(function(err) {
+        document.getElementById('diff-loading').classList.add('d-none');
+        const errEl = document.getElementById('diff-error');
+        errEl.querySelector('span').textContent = 'Network error: ' + err.message;
+        errEl.classList.remove('d-none');
+    });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,511 @@
+{% extends "base.html" %}
+
+{% block title %}BGP Dashboard - {{ app_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* Summary stat cards */
+.stat-card {
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.stat-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.2);
+}
+.stat-card .stat-value {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.1;
+}
+.stat-card .stat-label {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    opacity: 0.75;
+}
+
+/* Peers table */
+#peersTable th {
+    white-space: nowrap;
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+}
+#peersTable td {
+    vertical-align: middle;
+    font-size: 0.9rem;
+}
+#peersTable tbody tr {
+    transition: background-color 0.1s ease;
+}
+
+/* Loading overlay */
+#loadingSpinner {
+    padding: 3rem 0;
+}
+
+/* Empty state */
+#emptyState {
+    padding: 3rem 0;
+    color: #6c757d;
+}
+
+/* Filter bar */
+.filter-bar .form-control,
+.filter-bar .form-select {
+    font-size: 0.875rem;
+}
+
+/* Dark mode card tweak */
+[data-bs-theme="dark"] .stat-card {
+    background-color: #161b22;
+    border-color: #30363d;
+}
+[data-bs-theme="dark"] #peersTableCard {
+    background-color: #161b22;
+    border-color: #30363d;
+}
+[data-bs-theme="dark"] .filter-bar .form-control,
+[data-bs-theme="dark"] .filter-bar .form-select {
+    background-color: #0d1117;
+    border-color: #30363d;
+    color: #e6edf3;
+}
+[data-bs-theme="dark"] #peersTable tbody tr:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+    <!-- Page header -->
+    <div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-2">
+        <div>
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb mb-1">
+                    <li class="breadcrumb-item">
+                        <a href="{{ url_for('dashboard') }}">
+                            <i class="bi bi-speedometer2"></i> Dashboard
+                        </a>
+                    </li>
+                    <li class="breadcrumb-item active" aria-current="page">BGP Dashboard</li>
+                </ol>
+            </nav>
+            <h1 class="h3 mb-0 fw-semibold">
+                <i class="bi bi-diagram-3 me-2 text-primary"></i>BGP Dashboard
+            </h1>
+        </div>
+        <button id="refreshBtn" class="btn btn-outline-primary btn-sm" title="Refresh BGP data">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+        </button>
+    </div>
+
+    <!-- Summary stat cards -->
+    <div class="row g-3 mb-4" id="summaryRow">
+        <div class="col-6 col-md-3">
+            <div class="card stat-card h-100 border-0 shadow-sm">
+                <div class="card-body d-flex flex-column justify-content-center align-items-center text-center py-3">
+                    <div class="stat-value text-body" id="statTotal">—</div>
+                    <div class="stat-label text-muted mt-1">Total Peers</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card stat-card h-100 border-0 shadow-sm border-start border-success border-3">
+                <div class="card-body d-flex flex-column justify-content-center align-items-center text-center py-3">
+                    <div class="stat-value text-success" id="statEstablished">—</div>
+                    <div class="stat-label text-muted mt-1">Established</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card stat-card h-100 border-0 shadow-sm border-start border-danger border-3">
+                <div class="card-body d-flex flex-column justify-content-center align-items-center text-center py-3">
+                    <div class="stat-value text-danger" id="statNotEstablished">—</div>
+                    <div class="stat-label text-muted mt-1">Not Established</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card stat-card h-100 border-0 shadow-sm border-start border-secondary border-3">
+                <div class="card-body d-flex flex-column justify-content-center align-items-center text-center py-3">
+                    <div class="stat-value text-secondary" id="statUnknown">—</div>
+                    <div class="stat-label text-muted mt-1">Unknown</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter bar -->
+    <div class="card border-0 shadow-sm mb-3 filter-bar">
+        <div class="card-body py-2">
+            <div class="row g-2 align-items-end">
+                <div class="col-12 col-sm-6 col-md-3">
+                    <label for="filterDevice" class="form-label mb-1 small fw-semibold">Device</label>
+                    <input type="text" id="filterDevice" class="form-control form-control-sm"
+                           placeholder="Filter by device…" autocomplete="off">
+                </div>
+                <div class="col-12 col-sm-6 col-md-3">
+                    <label for="filterVrf" class="form-label mb-1 small fw-semibold">VRF</label>
+                    <input type="text" id="filterVrf" class="form-control form-control-sm"
+                           placeholder="Filter by VRF…" autocomplete="off">
+                </div>
+                <div class="col-12 col-sm-6 col-md-3">
+                    <label for="filterState" class="form-label mb-1 small fw-semibold">State</label>
+                    <select id="filterState" class="form-select form-select-sm">
+                        <option value="all">All States</option>
+                        <option value="Established">Established</option>
+                        <option value="Active">Active</option>
+                        <option value="Idle">Idle</option>
+                        <option value="Connect">Connect</option>
+                        <option value="OpenSent">OpenSent</option>
+                        <option value="OpenConfirm">OpenConfirm</option>
+                    </select>
+                </div>
+                <div class="col-12 col-sm-6 col-md-3 d-flex align-items-end">
+                    <button id="clearFiltersBtn" class="btn btn-outline-secondary btn-sm w-100">
+                        <i class="bi bi-x-circle me-1"></i>Clear Filters
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Peers table card -->
+    <div class="card border-0 shadow-sm" id="peersTableCard">
+        <div class="card-header d-flex align-items-center justify-content-between py-2">
+            <span class="fw-semibold">
+                <i class="bi bi-table me-2"></i>BGP Peers
+            </span>
+            <div class="d-flex align-items-center gap-2">
+                <span class="badge bg-secondary small" id="dataSourceBadge" style="display:none!important;"></span>
+                <span class="badge bg-secondary" id="peerCount">0 peers</span>
+            </div>
+        </div>
+        <div class="card-body p-0">
+
+            <!-- Loading spinner -->
+            <div id="loadingSpinner" class="text-center text-muted">
+                <div class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></div>
+                Loading BGP peers…
+            </div>
+
+            <!-- Error state -->
+            <div id="errorState" class="text-center text-danger d-none" style="padding: 3rem 0;">
+                <i class="bi bi-exclamation-triangle-fill fs-3 d-block mb-2"></i>
+                <span id="errorMessage">Failed to load BGP data.</span>
+            </div>
+
+            <!-- Empty state -->
+            <div id="emptyState" class="text-center d-none text-muted">
+                <i class="bi bi-diagram-3 fs-3 d-block mb-2"></i>
+                <span id="emptyStateMsg">No BGP peers found.</span>
+                <p class="small mt-1 mb-0" id="emptyStateHint">
+                    BGP data is collected with each telemetry cycle (~30s). If BGP is not
+                    configured on your devices, this page will remain empty.
+                </p>
+            </div>
+
+            <!-- Table -->
+            <div id="tableWrapper" class="d-none table-responsive">
+                <table class="table table-hover align-middle mb-0" id="peersTable">
+                    <thead class="table-dark">
+                        <tr>
+                            <th scope="col"><i class="bi bi-hdd-network me-1"></i>Device</th>
+                            <th scope="col">VRF</th>
+                            <th scope="col">Neighbor IP</th>
+                            <th scope="col">Peer ASN</th>
+                            <th scope="col">State</th>
+                            <th scope="col" class="text-end">Prefixes Rx</th>
+                            <th scope="col">Uptime</th>
+                        </tr>
+                    </thead>
+                    <tbody id="peersTableBody">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    'use strict';
+
+    /* ── State ─────────────────────────────────────────────────── */
+    let allPeers = [];
+
+    /* ── DOM refs ───────────────────────────────────────────────── */
+    const statTotal          = document.getElementById('statTotal');
+    const statEstablished    = document.getElementById('statEstablished');
+    const statNotEstablished = document.getElementById('statNotEstablished');
+    const statUnknown        = document.getElementById('statUnknown');
+    const peerCount          = document.getElementById('peerCount');
+    const dataSourceBadge    = document.getElementById('dataSourceBadge');
+
+    const loadingSpinner     = document.getElementById('loadingSpinner');
+    const errorState         = document.getElementById('errorState');
+    const errorMessage       = document.getElementById('errorMessage');
+    const emptyState         = document.getElementById('emptyState');
+    const tableWrapper       = document.getElementById('tableWrapper');
+    const tbody              = document.getElementById('peersTableBody');
+
+    const filterDevice       = document.getElementById('filterDevice');
+    const filterVrf          = document.getElementById('filterVrf');
+    const filterState        = document.getElementById('filterState');
+    const clearFiltersBtn    = document.getElementById('clearFiltersBtn');
+    const refreshBtn         = document.getElementById('refreshBtn');
+
+    /* ── Helpers ────────────────────────────────────────────────── */
+
+    /**
+     * Format uptime: accepts either a numeric seconds value or a pre-formatted
+     * string.  Returns a human-readable "Xd Xh Xm" string.
+     */
+    function formatUptime(raw) {
+        if (raw === null || raw === undefined || raw === '') return '—';
+        const secs = Number(raw);
+        if (!isNaN(secs) && typeof raw !== 'string') {
+            const d = Math.floor(secs / 86400);
+            const h = Math.floor((secs % 86400) / 3600);
+            const m = Math.floor((secs % 3600) / 60);
+            const parts = [];
+            if (d > 0) parts.push(d + 'd');
+            if (h > 0) parts.push(h + 'h');
+            parts.push(m + 'm');
+            return parts.join(' ');
+        }
+        return String(raw);
+    }
+
+    /**
+     * Return a Bootstrap badge HTML string for a given BGP state.
+     * Badge coloring:
+     *   Established                         → bg-success
+     *   Active / OpenSent / OpenConfirm / Connect → bg-warning text-dark
+     *   Idle                                → bg-danger
+     *   Other                               → bg-secondary
+     */
+    function stateBadge(state) {
+        if (!state) return '<span class="badge bg-secondary">Unknown</span>';
+        const s = String(state);
+        let cls;
+        if (s === 'Established') {
+            cls = 'bg-success';
+        } else if (['Active', 'OpenSent', 'OpenConfirm', 'Connect'].includes(s)) {
+            cls = 'bg-warning text-dark';
+        } else if (s === 'Idle') {
+            cls = 'bg-danger';
+        } else {
+            cls = 'bg-secondary';
+        }
+        return `<span class="badge ${cls}">${escHtml(s)}</span>`;
+    }
+
+    /** Minimal HTML escaping to prevent XSS from device data. */
+    function escHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    /* ── Summary cards ──────────────────────────────────────────── */
+    function updateSummary(peers) {
+        const total       = peers.length;
+        const established = peers.filter(p => p.state === 'Established').length;
+        const known       = ['Established', 'Active', 'Idle', 'Connect', 'OpenSent', 'OpenConfirm'];
+        const unknown     = peers.filter(p => !known.includes(p.state)).length;
+        const notEst      = total - established - unknown;
+
+        statTotal.textContent          = total;
+        statEstablished.textContent    = established;
+        statNotEstablished.textContent = notEst < 0 ? 0 : notEst;
+        statUnknown.textContent        = unknown;
+    }
+
+    /* ── Filtering ──────────────────────────────────────────────── */
+    function getFiltered() {
+        const devQ   = filterDevice.value.trim().toLowerCase();
+        const vrfQ   = filterVrf.value.trim().toLowerCase();
+        const stateQ = filterState.value;
+
+        return allPeers.filter(p => {
+            if (devQ   && !(p.hostname || '').toLowerCase().includes(devQ))   return false;
+            if (vrfQ   && !(p.vrf      || '').toLowerCase().includes(vrfQ))   return false;
+            if (stateQ !== 'all' && p.state !== stateQ)                        return false;
+            return true;
+        });
+    }
+
+    /* ── Table render ───────────────────────────────────────────── */
+    function renderTable() {
+        const filtered = getFiltered();
+
+        // Update peer count badge
+        const label = filtered.length === 1 ? '1 peer' : `${filtered.length} peers`;
+        peerCount.textContent = label;
+
+        if (filtered.length === 0) {
+            tableWrapper.classList.add('d-none');
+            emptyState.classList.remove('d-none');
+            const filtersActive = filterDevice.value || filterVrf.value || filterState.value !== 'all';
+            document.getElementById('emptyStateMsg').textContent = filtersActive
+                ? 'No BGP peers match the current filters.'
+                : 'No BGP peers found.';
+            document.getElementById('emptyStateHint').style.display = filtersActive ? 'none' : '';
+            return;
+        }
+
+        emptyState.classList.add('d-none');
+        tableWrapper.classList.remove('d-none');
+
+        tbody.innerHTML = filtered.map(p => `
+            <tr>
+                <td>
+                    <span class="fw-semibold">${escHtml(p.hostname)}</span>
+                </td>
+                <td>
+                    <code class="small">${escHtml(p.vrf || 'default')}</code>
+                </td>
+                <td>
+                    <code>${escHtml(p.neighbor)}</code>
+                </td>
+                <td>${escHtml(p.asn) || '—'}</td>
+                <td>${stateBadge(p.state)}</td>
+                <td class="text-end font-monospace">
+                    ${p.prefixes_received !== null && p.prefixes_received !== undefined
+                        ? escHtml(p.prefixes_received)
+                        : '—'}
+                </td>
+                <td class="text-nowrap">${formatUptime(p.uptime)}</td>
+            </tr>
+        `).join('');
+    }
+
+    /* ── UI state helpers ───────────────────────────────────────── */
+    function showLoading() {
+        loadingSpinner.classList.remove('d-none');
+        errorState.classList.add('d-none');
+        emptyState.classList.add('d-none');
+        tableWrapper.classList.add('d-none');
+        refreshBtn.disabled = true;
+        refreshBtn.querySelector('i').classList.add('spin');
+    }
+
+    function hideLoading() {
+        loadingSpinner.classList.add('d-none');
+        refreshBtn.disabled = false;
+        refreshBtn.querySelector('i').classList.remove('spin');
+    }
+
+    function showError(msg) {
+        errorMessage.textContent = msg || 'Failed to load BGP data.';
+        errorState.classList.remove('d-none');
+        tableWrapper.classList.add('d-none');
+        emptyState.classList.add('d-none');
+    }
+
+    /* ── Data fetch ─────────────────────────────────────────────── */
+    function fetchBgpData() {
+        showLoading();
+
+        fetch('/api/bgp/summary')
+            .then(res => {
+                if (!res.ok) {
+                    return res.json().catch(() => null).then(body => {
+                        const detail = body && body.error ? body.error : `HTTP ${res.status}`;
+                        throw new Error(detail);
+                    });
+                }
+                return res.json();
+            })
+            .then(data => {
+                hideLoading();
+                // Accept either { peers: [...] } or a bare array
+                allPeers = Array.isArray(data) ? data : (data.peers || []);
+                updateSummary(allPeers);
+                renderTable();
+                // Show data source badge
+                if (!Array.isArray(data)) {
+                    const fromCache = data.from_cache;
+                    const age = data.cache_age;
+                    let label, cls;
+                    if (fromCache && age !== null && age !== undefined) {
+                        label = `cache · ${age}s ago`;
+                        cls   = age < 60 ? 'bg-success' : 'bg-warning text-dark';
+                    } else if (fromCache) {
+                        label = 'from cache'; cls = 'bg-secondary';
+                    } else {
+                        label = 'live query'; cls = 'bg-info text-dark';
+                    }
+                    dataSourceBadge.textContent = label;
+                    dataSourceBadge.className   = `badge small ${cls}`;
+                    dataSourceBadge.style.removeProperty('display');
+                }
+            })
+            .catch(err => {
+                hideLoading();
+                showError(err.message || 'Failed to load BGP data.');
+                // Reset summary to zeroes on error
+                [statTotal, statEstablished, statNotEstablished, statUnknown]
+                    .forEach(el => { el.textContent = '—'; });
+                peerCount.textContent = '0 peers';
+            });
+    }
+
+    /* ── Event listeners ────────────────────────────────────────── */
+    filterDevice.addEventListener('input',  renderTable);
+    filterVrf.addEventListener('input',     renderTable);
+    filterState.addEventListener('change',  renderTable);
+
+    clearFiltersBtn.addEventListener('click', () => {
+        filterDevice.value = '';
+        filterVrf.value    = '';
+        filterState.value  = 'all';
+        renderTable();
+    });
+
+    refreshBtn.addEventListener('click', fetchBgpData);
+
+    /* ── Bootstrap enter key for filter inputs ──────────────────── */
+    [filterDevice, filterVrf].forEach(el => {
+        el.addEventListener('keydown', e => {
+            if (e.key === 'Enter') e.preventDefault();
+        });
+    });
+
+    /* ── Initial load ───────────────────────────────────────────── */
+    // DOMContentLoaded may have already fired (script is at page bottom),
+    // so call directly if ready, otherwise wait.
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', fetchBgpData);
+    } else {
+        fetchBgpData();
+    }
+
+})();
+</script>
+
+<style>
+/* Refresh button spinner animation */
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+#refreshBtn i.spin {
+    display: inline-block;
+    animation: spin 0.75s linear infinite;
+}
+</style>
+{% endblock %}
