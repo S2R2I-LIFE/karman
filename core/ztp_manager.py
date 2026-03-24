@@ -116,6 +116,42 @@ def register(hostname, ip):
     return False
 
 
+def install_agent():
+    """Download the Kármán agent script and add it to the startup-config daemon stanza."""
+    if not KARMAN_URL:
+        log("No Karman URL — skipping agent install")
+        return False
+    agent_url = f"{KARMAN_URL}/karman-agent.py"
+    agent_path = "/mnt/flash/karman_agent.py"
+    log(f"Downloading agent from {agent_url}")
+    try:
+        with urllib.request.urlopen(agent_url, timeout=30) as resp:
+            content = resp.read()
+        with open(agent_path, "wb") as f:
+            f.write(content)
+        os.chmod(agent_path, 0o755)
+        log(f"Agent written to {agent_path}")
+    except Exception as e:
+        log(f"Agent download failed: {e}")
+        return False
+
+    # Append daemon stanza to the startup-config we just wrote
+    daemon_stanza = (
+        "\n"
+        "daemon karman-agent\n"
+        f"   exec /usr/bin/python3 {agent_path}\n"
+        "   no shutdown\n"
+    )
+    try:
+        with open("/mnt/flash/startup-config", "a") as f:
+            f.write(daemon_stanza)
+        log("Daemon stanza appended to startup-config")
+        return True
+    except Exception as e:
+        log(f"Failed to append daemon stanza: {e}")
+        return False
+
+
 def main():
     log("Zero Touch Provisioning starting")
     hostname = get_hostname()
@@ -131,6 +167,8 @@ def main():
         register(hostname, ip)
     else:
         log("WARNING: Could not determine management IP — skipping registration")
+
+    install_agent()
 
     log("ZTP complete — reloading to apply startup config")
     subprocess.run(["FastCli", "-p", "15", "-c", "reload now"], capture_output=True)

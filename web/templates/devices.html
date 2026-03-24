@@ -103,6 +103,7 @@
                                 <th>Model</th>
                                 <th>Management</th>
                                 <th>Last Backup</th>
+                                <th>Agent</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
@@ -141,6 +142,17 @@
                                         </span>
                                     {% else %}
                                         <span class="text-muted small">Never</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if device.agent_installed %}
+                                        <span class="badge bg-success" title="Last check-in: {{ device.agent_last_checkin or 'unknown' }}">
+                                            <i class="bi bi-cpu"></i> Active
+                                        </span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">
+                                            <i class="bi bi-cpu"></i> None
+                                        </span>
                                     {% endif %}
                                 </td>
                                 <td>

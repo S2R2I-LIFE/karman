@@ -7,6 +7,7 @@ Manages device inventory with support for both CVP-managed and custom-managed de
 import yaml
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import List, Dict, Optional
 from enum import Enum
 from pathlib import Path
@@ -45,6 +46,8 @@ class Device:
     polling_enabled: bool = True
     last_backup_at: Optional[str] = None
     last_synced_at: Optional[str] = None
+    agent_installed: bool = False
+    agent_last_checkin: Optional[str] = None
 
     def to_dict(self):
         return {
@@ -108,8 +111,10 @@ class InventoryManager:
         except sqlite3.OperationalError:
             pass  # Column already exists
 
-        # Migration: add last_backup_at / last_synced_at
-        for col in ('last_backup_at TIMESTAMP', 'last_synced_at TIMESTAMP'):
+        # Migration: add last_backup_at / last_synced_at / agent columns
+        for col in ('last_backup_at TIMESTAMP', 'last_synced_at TIMESTAMP',
+                    'agent_installed INTEGER DEFAULT 0',
+                    'agent_last_checkin TIMESTAMP'):
             try:
                 cursor.execute(f'ALTER TABLE devices ADD COLUMN {col}')
                 conn.commit()
@@ -208,7 +213,7 @@ class InventoryManager:
         cursor.execute('''
             SELECT hostname, ip_address, model, serial_number, eos_version,
                    management_type, role, site, container, cvp_managed, gnmi_port, polling_enabled,
-                   last_backup_at, last_synced_at
+                   last_backup_at, last_synced_at, agent_installed, agent_last_checkin
             FROM devices WHERE hostname = ?
         ''', (hostname,))
         row = cursor.fetchone()
@@ -247,6 +252,8 @@ class InventoryManager:
             polling_enabled=bool(row[11]) if row[11] is not None else True,
             last_backup_at=row[12],
             last_synced_at=row[13],
+            agent_installed=bool(row[14]) if row[14] is not None else False,
+            agent_last_checkin=row[15],
             configlets=configlets,
             tags=tags
         )
@@ -392,6 +399,18 @@ class InventoryManager:
             raise
         finally:
             conn.close()
+
+    def update_agent_checkin(self, hostname: str, installed: bool = True):
+        """Record a device-agent check-in."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            'UPDATE devices SET agent_installed = ?, agent_last_checkin = ? WHERE hostname = ?',
+            (1 if installed else 0,
+             datetime.utcnow().isoformat(timespec='seconds'),
+             hostname)
+        )
+        conn.commit()
+        conn.close()
 
     def import_from_yaml(self, yaml_file: str):
         """Import inventory from YAML file"""

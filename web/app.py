@@ -35,6 +35,7 @@ from core.notification import NotificationManager
 from core.agent_manager import AgentManager
 from core.alert_manager import AlertManager
 from core.ztp_manager import ZTPManager
+from core.swix_builder import SwixBuilder
 from builder import ConfigletBuilder
 from validator import ConfigValidator
 from web.email_sender import EmailSender
@@ -67,7 +68,8 @@ notification_mgr = NotificationManager(DB_PATH)
 email_sender = EmailSender(DB_PATH)
 agent_mgr = AgentManager(DB_PATH)
 alert_mgr = AlertManager(DB_PATH)
-ztp_mgr   = ZTPManager(DB_PATH)
+ztp_mgr      = ZTPManager(DB_PATH)
+swix_builder = SwixBuilder()
 builder = ConfigletBuilder()
 validator = ConfigValidator()
 
@@ -4713,6 +4715,97 @@ def api_ztp_leases():
 @admin_required
 def api_ztp_status():
     return jsonify(ztp_mgr.get_dhcp_status())
+
+
+# ── Device-resident agent (karman-agent.py / .swix) ──────────────────────────
+
+@app.route('/karman-agent.py')
+def serve_agent_script():
+    """Serve the device-resident agent Python script (no auth — device downloads it)."""
+    settings = ztp_mgr.get_settings()
+    karman_url = settings.get('ztp_karman_url', '').rstrip('/')
+    api_key    = settings.get('ztp_api_key', '')
+    script = swix_builder.generate_agent_script(karman_url, api_key)
+    from flask import Response
+    return Response(script, mimetype='text/x-python',
+                    headers={'Content-Disposition': 'attachment; filename=karman_agent.py'})
+
+
+@app.route('/karman-agent.swix')
+def serve_agent_swix():
+    """Serve the .swix EOS extension archive containing the agent."""
+    settings = ztp_mgr.get_settings()
+    karman_url = settings.get('ztp_karman_url', '').rstrip('/')
+    api_key    = settings.get('ztp_api_key', '')
+    data = swix_builder.generate_swix(karman_url, api_key)
+    from flask import Response
+    return Response(data, mimetype='application/zip',
+                    headers={'Content-Disposition': 'attachment; filename=karman-agent.swix'})
+
+
+@app.route('/api/devices/checkin', methods=['POST'])
+def api_devices_checkin():
+    """
+    Check-in endpoint for the device-resident Kármán agent.
+
+    Body (JSON):
+        hostname  — EOS hostname
+        ip        — management IP
+        serial    — serial number (optional)
+        event     — "startup" | "heartbeat" | "config_lost"
+        api_key   — ZTP API key for authentication
+    """
+    data = request.get_json(silent=True) or {}
+    hostname = (data.get('hostname') or '').strip()
+    ip       = (data.get('ip') or '').strip()
+    serial   = (data.get('serial') or '').strip()
+    event    = (data.get('event') or 'heartbeat').strip()
+    raw_key  = (data.get('api_key') or '').strip()
+
+    if not hostname:
+        return jsonify({'success': False, 'message': 'hostname required'}), 400
+
+    # Validate API key
+    settings = ztp_mgr.get_settings()
+    expected_key = settings.get('ztp_api_key', '')
+    if not expected_key or raw_key != expected_key:
+        return jsonify({'success': False, 'message': 'invalid api_key'}), 403
+
+    # Update agent check-in timestamp on inventory record (if device exists)
+    device = inventory_mgr.get_device(hostname)
+    if device:
+        inventory_mgr.update_agent_checkin(hostname, installed=True)
+
+        # On config_lost: trigger a backup to capture the empty/factory config
+        # and notify admins so they can push a replacement configlet.
+        if event == 'config_lost':
+            try:
+                _do_device_backup(
+                    hostname, ip or device.ip_address,
+                    device.management_type.value,
+                    device.gnmi_port,
+                    os.environ.get('DEFAULT_DEVICE_USERNAME', 'admin'),
+                    os.environ.get('DEFAULT_DEVICE_PASSWORD', '')
+                )
+            except Exception as exc:
+                app.logger.warning(f"[Checkin] Backup after config_lost failed for {hostname}: {exc}")
+
+            # Notify admins
+            try:
+                admins = [u for u in user_mgr.list_all_users() if u.is_admin]
+                for admin in admins:
+                    notification_mgr.create_notification(
+                        admin.user_id, 'config_lost',
+                        f'Config lost on {hostname}',
+                        f'Device {hostname} ({ip}) reported a config-loss event. '
+                        f'The running config appears to have been wiped. '
+                        f'Review the Compliance page and push a replacement configlet.'
+                    )
+            except Exception as exc:
+                app.logger.warning(f"[Checkin] Admin notify failed: {exc}")
+
+    app.logger.info(f"[Checkin] {hostname} ip={ip} event={event}")
+    return jsonify({'success': True, 'message': 'check-in recorded'})
 
 
 # ==================== Main ====================

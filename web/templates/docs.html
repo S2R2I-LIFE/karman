@@ -29,6 +29,7 @@
           <a class="nav-link px-3 py-2 border-bottom" href="#bgp">BGP Dashboard</a>
           <a class="nav-link px-3 py-2 border-bottom" href="#alerting">Threshold Alerting</a>
           <a class="nav-link px-3 py-2 border-bottom" href="#ztp">Zero Touch Provisioning</a>
+          <a class="nav-link px-3 py-2 border-bottom" href="#device-agent">Device Agent (.swix)</a>
           <a class="nav-link px-3 py-2 border-bottom" href="#topology">Topology</a>
           <a class="nav-link px-3 py-2 border-bottom" href="#eos-config">EOS Device Config</a>
           <a class="nav-link px-3 py-2" href="#troubleshooting">Troubleshooting</a>
@@ -305,6 +306,64 @@
       </div>
     </div>
 
+    <!-- Device Agent -->
+    <div class="card mb-4" id="device-agent">
+      <div class="card-header"><h5 class="mb-0"><i class="bi bi-cpu text-success"></i> Device-resident Agent (.swix)</h5></div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">
+          The Kármán agent is a lightweight Python daemon that runs directly on your EOS switches.
+          It sends periodic heartbeats and immediately notifies Kármán when it detects a configuration
+          wipe — letting you know a device may need re-provisioning before it causes an outage.
+        </p>
+        <h6>How it works</h6>
+        <ol class="text-muted small mb-3">
+          <li>Agent checks in via <code>POST /api/devices/checkin</code> every 5 minutes</li>
+          <li>On each check-in, Kármán updates the <span class="badge bg-success">Active</span> badge on the Devices page</li>
+          <li>If the running config falls below 20 meaningful lines (factory reset / <code>write erase</code>), the agent sends a <code>config_lost</code> event</li>
+          <li>Kármán triggers a backup run and sends an in-app notification to all admins</li>
+        </ol>
+        <h6>Installation options</h6>
+        <div class="row g-3 mb-3">
+          <div class="col-md-6">
+            <div class="card bg-body-secondary h-100">
+              <div class="card-body">
+                <h6 class="card-title"><i class="bi bi-broadcast-pin"></i> Automatic (via ZTP)</h6>
+                <p class="small text-muted mb-0">
+                  When a device is provisioned via ZTP the script automatically downloads
+                  <code>karman_agent.py</code> to <code>/mnt/flash/</code> and adds
+                  a <code>daemon karman-agent</code> stanza to the startup-config.
+                  No manual steps needed.
+                </p>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="card bg-body-secondary h-100">
+              <div class="card-body">
+                <h6 class="card-title"><i class="bi bi-terminal"></i> Manual (.swix)</h6>
+                <p class="small text-muted mb-1">Run on the switch:</p>
+                <pre class="small mb-0"><code>copy http://&lt;karman-ip&gt;:5000/karman-agent.swix flash:
+extension karman-agent.swix
+copy installed-extensions boot-extensions</code></pre>
+                <p class="small text-muted mt-1 mb-0">The .swix persists across <code>write erase</code> and software upgrades.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <h6>Check-in payload</h6>
+        <table class="table table-sm table-bordered mb-0">
+          <thead><tr><th>Field</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>hostname</code></td><td>EOS hostname (<code>show hostname</code>)</td></tr>
+            <tr><td><code>ip</code></td><td>Management IP</td></tr>
+            <tr><td><code>serial</code></td><td>Serial number</td></tr>
+            <tr><td><code>event</code></td><td><code>startup</code> | <code>heartbeat</code> | <code>config_lost</code></td></tr>
+            <tr><td><code>api_key</code></td><td>ZTP API key (set in Admin → ZTP)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Topology -->
     <div class="card mb-4" id="topology">
       <div class="card-header"><h5 class="mb-0"><i class="bi bi-diagram-3 text-secondary"></i> Topology</h5></div>
@@ -369,6 +428,8 @@ daemon TerminAttr
             <tr><td>Compliance sync fails silently</td><td>Device unreachable or no config returned</td><td>Check device is UP; try manual sync and watch toast message</td></tr>
             <tr><td>Alert rules not firing</td><td>Telemetry cache empty or rule disabled</td><td>Verify device is polled; check rule is enabled and scope is correct</td></tr>
             <tr><td>ZTP devices not registering</td><td>TerminAttr missing <code>-allowed-ips</code></td><td>Add <code>-allowed-ips=0.0.0.0/0</code> to TerminAttr exec line</td></tr>
+            <tr><td>Agent badge stays "None"</td><td>Agent not installed or API key mismatch</td><td>Verify <code>daemon karman-agent</code> is in running-config; confirm API key in ZTP settings matches the one baked into agent script</td></tr>
+            <tr><td>Agent installed but no config-loss alerts</td><td>Running config has &gt;20 lines after wipe</td><td>The &lt;20 line heuristic is a simple guard — check <code>show running-config | wc -l</code> after wipe; contact support if baseline differs</td></tr>
             <tr><td>Built-in DHCP fails to start</td><td>dnsmasq not installed</td><td><code>apt install dnsmasq</code> on the host; set <code>network_mode: host</code></td></tr>
             <tr><td>500 on any page</td><td>Python exception in route</td><td>Run <code>docker logs custom-cvp-docker --tail=100</code> and look for Traceback</td></tr>
           </tbody>

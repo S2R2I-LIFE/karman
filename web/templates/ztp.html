@@ -400,6 +400,49 @@
   </div>
 </div>
 
+<!-- ── Device-resident Agent ──────────────────────────────────────────────── -->
+<div class="row mb-4">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-cpu"></i> Device-resident Agent</h5>
+      </div>
+      <div class="card-body">
+        <p class="text-muted mb-3">
+          The Kármán agent runs as an EOS daemon directly on your switches. It sends
+          periodic heartbeats to Kármán and immediately alerts you if the running
+          config is wiped (factory reset / <code>write erase</code>). The ZTP script
+          automatically installs the agent during provisioning.
+        </p>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <div class="d-grid gap-2">
+              <a href="{{ settings.ztp_karman_url }}/karman-agent.py" target="_blank"
+                 class="btn btn-outline-primary">
+                <i class="bi bi-file-code"></i> Download Agent Script (.py)
+              </a>
+              <a href="{{ settings.ztp_karman_url }}/karman-agent.swix" target="_blank"
+                 class="btn btn-outline-secondary">
+                <i class="bi bi-archive"></i> Download .swix Extension
+              </a>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="alert alert-secondary mb-0 small">
+              <strong>Manual install on EOS:</strong>
+              <pre class="mb-0 mt-1" style="font-size:0.75rem;">copy http://&lt;karman-ip&gt;:5000/karman-agent.swix flash:
+extension karman-agent.swix
+copy installed-extensions boot-extensions</pre>
+              <p class="mb-0 mt-2">The agent badge on the <a href="{{ url_for('devices') }}">Devices</a>
+              page turns <span class="badge bg-success">Active</span> after the first check-in.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div class="position-fixed bottom-0 end-0 p-3" style="z-index:1100">
   <div id="ztp-toast" class="toast align-items-center border-0" role="alert">

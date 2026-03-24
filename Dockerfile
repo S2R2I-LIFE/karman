@@ -30,6 +30,7 @@ WORKDIR /app
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     curl \
+    dnsmasq \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python dependencies from base stage
