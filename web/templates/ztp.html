@@ -98,27 +98,25 @@
       <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="mb-0"><i class="bi bi-router"></i> Built-in DHCP Server</h5>
         <div class="d-flex align-items-center gap-2">
-          {% if not dnsmasq_available %}
-          <span class="badge bg-warning text-dark">dnsmasq not installed</span>
+          {% if dhcp_status.running %}
+          <span class="badge bg-success" id="dhcp-status-badge">
+            <i class="bi bi-circle-fill"></i> Running
+            {% if dhcp_status.backend == 'dnsmasq' %}(dnsmasq PID {{ dhcp_status.pid }})
+            {% else %}(Python){% endif %}
+          </span>
           {% else %}
-            {% if dhcp_status.running %}
-            <span class="badge bg-success" id="dhcp-status-badge">
-              <i class="bi bi-circle-fill"></i> Running (PID {{ dhcp_status.pid }})
-            </span>
-            {% else %}
-            <span class="badge bg-secondary" id="dhcp-status-badge">
-              <i class="bi bi-circle"></i> Stopped
-            </span>
-            {% endif %}
+          <span class="badge bg-secondary" id="dhcp-status-badge">
+            <i class="bi bi-circle"></i> Stopped
+          </span>
           {% endif %}
           <button type="button" class="btn btn-sm btn-success" id="dhcp-start-btn"
                   onclick="dhcpAction('start')"
-                  {% if not dnsmasq_available or dhcp_status.running %}disabled{% endif %}>
+                  {% if dhcp_status.running %}disabled{% endif %}>
             <i class="bi bi-play-fill"></i> Start
           </button>
           <button type="button" class="btn btn-sm btn-danger" id="dhcp-stop-btn"
                   onclick="dhcpAction('stop')"
-                  {% if not dnsmasq_available or not dhcp_status.running %}disabled{% endif %}>
+                  {% if not dhcp_status.running %}disabled{% endif %}>
             <i class="bi bi-stop-fill"></i> Stop
           </button>
         </div>
@@ -281,7 +279,67 @@
   </div>
 </div>
 
-<!-- ── Row 3: Base Config Template ───────────────────────────────────────── -->
+<!-- ── Row 3: Management IP Pool ─────────────────────────────────────────── -->
+<div class="row g-4 mb-4">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-diagram-3"></i> Management IP Pool</h5>
+      </div>
+      <div class="card-body">
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" id="ztp_mgmt_pool_enabled"
+                 name="ztp_mgmt_pool_enabled"
+                 {% if settings.ztp_mgmt_pool_enabled == 'true' %}checked{% endif %}
+                 onchange="togglePoolFields(this.checked)">
+          <label class="form-check-label fw-semibold" for="ztp_mgmt_pool_enabled">
+            Assign permanent management IPs from pool
+          </label>
+          <div class="form-text">
+            When enabled, each new device is automatically assigned the next available static IP
+            from this range. The ZTP script configures <code>interface {{ settings.ztp_mgmt_iface or 'Management1' }}</code>
+            with that IP so the switch keeps the same address after reboot.
+            The device is added to inventory using the permanent IP, not the temporary DHCP address.
+          </div>
+        </div>
+        <div id="pool-fields" {% if settings.ztp_mgmt_pool_enabled != 'true' %}style="display:none"{% endif %}>
+          <div class="row g-3">
+            <div class="col-md-2">
+              <label class="form-label">Pool Start</label>
+              <input type="text" class="form-control" name="ztp_mgmt_pool_start"
+                     value="{{ settings.ztp_mgmt_pool_start }}" placeholder="192.168.2.10">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Pool End</label>
+              <input type="text" class="form-control" name="ztp_mgmt_pool_end"
+                     value="{{ settings.ztp_mgmt_pool_end }}" placeholder="192.168.2.50">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Prefix Length</label>
+              <input type="number" class="form-control" name="ztp_mgmt_prefix"
+                     value="{{ settings.ztp_mgmt_prefix or '24' }}" min="8" max="30"
+                     placeholder="24">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Default Gateway</label>
+              <input type="text" class="form-control" name="ztp_mgmt_gateway"
+                     value="{{ settings.ztp_mgmt_gateway }}" placeholder="192.168.2.1">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Management Interface</label>
+              <input type="text" class="form-control" name="ztp_mgmt_iface"
+                     value="{{ settings.ztp_mgmt_iface or 'Management1' }}"
+                     placeholder="Management1">
+              <div class="form-text">EOS management interface name (Management1 for vEOS and most hardware)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Row 4: Base Config Template ───────────────────────────────────────── -->
 <div class="row g-4 mb-4">
   <div class="col-12">
     <div class="card">
@@ -303,7 +361,10 @@
           This config is written to <code>/mnt/flash/startup-config</code> on each new device.
           Available variables:
           <code>{username}</code> <code>{password}</code> <code>{hostname}</code>
-          <code>{ip}</code> <code>{karman_url}</code>
+          <code>{ip}</code> <code>{karman_url}</code> —
+          <code>{ip}</code> is the permanent pool IP when the management pool is enabled,
+          otherwise the DHCP address. The management interface stanza is prepended automatically
+          when pool is enabled; you do not need to add it here.
         </p>
         <textarea class="form-control font-monospace"
                   name="ztp_base_config"
@@ -467,6 +528,10 @@ function showToast(msg, ok = true) {
 
 function toggleBanner(enabled) {
   document.getElementById('script-url-banner').classList.toggle('d-none', !enabled);
+}
+
+function togglePoolFields(enabled) {
+  document.getElementById('pool-fields').style.display = enabled ? '' : 'none';
 }
 
 function updateScriptUrl(base) {

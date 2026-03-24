@@ -31,6 +31,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     curl \
     dnsmasq \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python dependencies from base stage
@@ -65,6 +66,12 @@ RUN mkdir -p \
     /app/web/static \
     /app/web/templates && \
     chown -R cvpuser:cvpuser /app
+
+# Grant dnsmasq the capabilities it needs to run as non-root
+# (bind to privileged port 67, raw/broadcast sockets for DHCP)
+RUN apt-get update && apt-get install -y libcap2-bin && \
+    setcap 'cap_net_bind_service,cap_net_raw,cap_net_admin+ep' /usr/sbin/dnsmasq && \
+    rm -rf /var/lib/apt/lists/*
 
 # Switch to non-root user
 USER cvpuser

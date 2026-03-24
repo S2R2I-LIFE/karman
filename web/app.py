@@ -4596,6 +4596,12 @@ def admin_settings_ztp():
         'ztp_default_site':      f.get('ztp_default_site', ''),
         'ztp_default_mgmt_type': f.get('ztp_default_mgmt_type', 'auto'),
         'ztp_base_config':       f.get('ztp_base_config', ''),
+        'ztp_mgmt_pool_enabled': 'true' if f.get('ztp_mgmt_pool_enabled') else 'false',
+        'ztp_mgmt_pool_start':   f.get('ztp_mgmt_pool_start', ''),
+        'ztp_mgmt_pool_end':     f.get('ztp_mgmt_pool_end', ''),
+        'ztp_mgmt_prefix':       f.get('ztp_mgmt_prefix', '24'),
+        'ztp_mgmt_gateway':      f.get('ztp_mgmt_gateway', ''),
+        'ztp_mgmt_iface':        f.get('ztp_mgmt_iface', 'Management0'),
     }
     ztp_mgr.save_settings(settings)
     # Restart DHCP if it was running and dhcp settings changed
@@ -4644,21 +4650,29 @@ def api_device_register():
     # Already registered?
     existing = inventory_mgr.get_device(hostname)
     if existing:
-        return jsonify({'success': True, 'message': 'Already registered', 'existing': True})
+        # Still return mgmt_ip so the ZTP script can configure the interface
+        mgmt_ip = existing.ip_address if existing else ''
+        return jsonify({'success': True, 'message': 'Already registered',
+                        'existing': True, 'mgmt_ip': mgmt_ip})
 
     if settings.get('ztp_auto_add') != 'true':
         return jsonify({'success': True,
-                        'message': 'Auto-add disabled — device queued for manual review'})
+                        'message': 'Auto-add disabled — device queued for manual review',
+                        'mgmt_ip': ''})
+
+    # Allocate a permanent management IP from the pool (if enabled)
+    mgmt_ip = ztp_mgr.allocate_mgmt_ip()
+    device_ip = mgmt_ip or ip   # permanent IP takes priority over DHCP IP
 
     # Detect or use configured management type
     mgmt_str = settings.get('ztp_default_mgmt_type', 'auto')
     if mgmt_str == 'auto':
-        mgmt_str = _probe_mgmt_type(ip)
+        mgmt_str = _probe_mgmt_type(device_ip)
 
     try:
         device = Device(
             hostname=hostname,
-            ip_address=ip,
+            ip_address=device_ip,
             model='',
             serial_number='',
             eos_version='',
@@ -4680,11 +4694,18 @@ def api_device_register():
                 admin.user_id,
                 'device_registered',
                 'New Device Registered via ZTP',
-                f'{hostname} ({ip}) was automatically added via Zero Touch Provisioning.',
+                f'{hostname} ({device_ip}) was automatically added via Zero Touch Provisioning.',
             )
 
-        app.logger.info(f"[ZTP] Auto-registered {hostname} ({ip}) as {mgmt_str}")
-        return jsonify({'success': True, 'message': f'{hostname} registered successfully'})
+        app.logger.info(f"[ZTP] Auto-registered {hostname} ({device_ip}) as {mgmt_str}"
+                        + (f" pool IP={mgmt_ip}" if mgmt_ip else ""))
+        return jsonify({
+            'success':     True,
+            'message':     f'{hostname} registered successfully',
+            'mgmt_ip':     mgmt_ip or '',
+            'mgmt_prefix': settings.get('ztp_mgmt_prefix', '24') if mgmt_ip else '',
+            'mgmt_gateway': settings.get('ztp_mgmt_gateway', '') if mgmt_ip else '',
+        })
 
     except Exception as e:
         app.logger.error(f"[ZTP] Registration error for {hostname}: {e}")

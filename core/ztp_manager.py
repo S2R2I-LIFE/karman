@@ -4,13 +4,17 @@ ZTP Manager — Zero Touch Provisioning for Kármán
 Manages DHCP server (dnsmasq), ZTP script generation, and device auto-registration.
 """
 
+import ipaddress
 import os
 import signal
 import shutil
 import sqlite3
 import subprocess
+import threading
 import time
 from typing import Optional
+
+from core.dhcp_server import PythonDHCPServer
 
 
 # ---------------------------------------------------------------------------
@@ -24,10 +28,15 @@ _ZTP_SCRIPT_TEMPLATE = r'''#!/usr/bin/env python3
 # =============================================================================
 import os, json, socket, subprocess, time, urllib.request, urllib.error
 
-KARMAN_URL  = "__KARMAN_URL__"
-USERNAME    = "__USERNAME__"
-PASSWORD    = "__PASSWORD__"
-API_KEY     = "__API_KEY__"
+KARMAN_URL   = "__KARMAN_URL__"
+USERNAME     = "__USERNAME__"
+PASSWORD     = "__PASSWORD__"
+API_KEY      = "__API_KEY__"
+
+# Management IP pool — set by Kármán when pool is enabled (empty = pool disabled)
+MGMT_PREFIX  = "__MGMT_PREFIX__"    # e.g. "24"
+MGMT_GATEWAY = "__MGMT_GATEWAY__"   # e.g. "192.168.2.1"
+MGMT_IFACE   = "__MGMT_IFACE__"     # e.g. "Management0"
 
 BASE_CONFIG = """__BASE_CONFIG__"""
 
@@ -67,15 +76,26 @@ def get_mgmt_ip():
     return ""
 
 
-def apply_base_config(hostname, ip):
+def apply_base_config(hostname, config_ip):
     try:
         config = BASE_CONFIG.format(
             hostname=hostname,
-            ip=ip,
+            ip=config_ip,
             username=USERNAME,
             password=PASSWORD,
             karman_url=KARMAN_URL,
         )
+        # When pool is enabled (MGMT_PREFIX is set), prepend the management
+        # interface stanza so the switch comes up with a static permanent IP.
+        if config_ip and MGMT_PREFIX:
+            mgmt_block = (
+                f"interface {MGMT_IFACE}\n"
+                f"   ip address {config_ip}/{MGMT_PREFIX}\n"
+                "!\n"
+            )
+            if MGMT_GATEWAY:
+                mgmt_block += f"ip route 0.0.0.0/0 {MGMT_GATEWAY}\n!\n"
+            config = mgmt_block + config
         with open("/mnt/flash/startup-config", "w") as f:
             f.write(config)
         log("Base config written to /mnt/flash/startup-config")
@@ -86,9 +106,10 @@ def apply_base_config(hostname, ip):
 
 
 def register(hostname, ip):
+    """Register with Kármán; returns permanent mgmt IP if pool is enabled, else ''."""
     if not KARMAN_URL:
         log("No Karman URL configured — skipping registration")
-        return False
+        return ""
     payload = json.dumps({
         "hostname": hostname,
         "ip": ip,
@@ -105,15 +126,17 @@ def register(hostname, ip):
             with urllib.request.urlopen(req, timeout=15) as resp:
                 result = json.loads(resp.read())
                 if result.get("success"):
-                    log(f"Registered: {hostname} @ {ip}")
-                    return True
+                    mgmt_ip = result.get("mgmt_ip", "")
+                    log(f"Registered: {hostname} @ {ip}" +
+                        (f"  permanent IP: {mgmt_ip}" if mgmt_ip else ""))
+                    return mgmt_ip
                 log(f"Registration rejected: {result.get('message', 'unknown')}")
-                return False
+                return ""
         except Exception as e:
             log(f"Attempt {attempt + 1}/3 failed: {e}")
             if attempt < 2:
                 time.sleep(5)
-    return False
+    return ""
 
 
 def install_agent():
@@ -155,18 +178,21 @@ def install_agent():
 def main():
     log("Zero Touch Provisioning starting")
     hostname = get_hostname()
-    ip = get_mgmt_ip()
-    log(f"Device: {hostname} / {ip or 'IP unknown'}")
+    dhcp_ip  = get_mgmt_ip()
+    log(f"Device: {hostname} / {dhcp_ip or 'IP unknown'}")
 
-    if apply_base_config(hostname, ip):
+    # Register with Kármán first — response may include a permanent management IP
+    # allocated from the configured pool.
+    mgmt_ip = register(hostname, dhcp_ip) if (hostname or dhcp_ip) else ""
+    if mgmt_ip:
+        log(f"Permanent management IP assigned: {mgmt_ip}/{MGMT_PREFIX}")
+
+    # Use the permanent IP in the startup config; fall back to the DHCP address.
+    config_ip = mgmt_ip or dhcp_ip
+    if apply_base_config(hostname, config_ip):
         log("Base config applied")
     else:
         log("WARNING: Base config apply failed — continuing anyway")
-
-    if ip:
-        register(hostname, ip)
-    else:
-        log("WARNING: Could not determine management IP — skipping registration")
 
     install_agent()
 
@@ -229,10 +255,19 @@ class ZTPManager:
         'ztp_default_site':      '',
         'ztp_default_mgmt_type': 'auto',
         'ztp_base_config':       DEFAULT_BASE_CONFIG,
+        # Management IP pool (optional — devices get a permanent static IP on registration)
+        'ztp_mgmt_pool_enabled': 'false',
+        'ztp_mgmt_pool_start':   '',
+        'ztp_mgmt_pool_end':     '',
+        'ztp_mgmt_prefix':       '24',
+        'ztp_mgmt_gateway':      '',
+        'ztp_mgmt_iface':        'Management1',
     }
 
     def __init__(self, db_path: str):
         self.db_path = db_path
+        self._python_dhcp = PythonDHCPServer(self.get_settings)
+        self._alloc_lock  = threading.Lock()
         self._init_db()
 
     # ------------------------------------------------------------------
@@ -288,12 +323,33 @@ class ZTPManager:
     # DHCP leases
     # ------------------------------------------------------------------
     def get_leases(self) -> list:
-        self._sync_dnsmasq_leases()
+        # Sync in-memory Python DHCP leases → DB
+        if self._python_dhcp.is_running():
+            self._sync_python_leases()
+        else:
+            self._sync_dnsmasq_leases()
         with self._conn() as db:
             rows = db.execute(
                 "SELECT * FROM ztp_leases ORDER BY last_seen DESC"
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def _sync_python_leases(self):
+        now = time.time()
+        leases = self._python_dhcp.get_leases()
+        if not leases:
+            return
+        with self._conn() as db:
+            for entry in leases:
+                mac = entry['mac']
+                ip  = entry['ip']
+                db.execute('''
+                    INSERT INTO ztp_leases (mac_address, ip_address, hostname, first_seen, last_seen)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(mac_address) DO UPDATE SET
+                        ip_address = excluded.ip_address,
+                        last_seen  = excluded.last_seen
+                ''', (mac, ip, '', now, now))
 
     def _sync_dnsmasq_leases(self):
         if not os.path.exists(self.DNSMASQ_LEASES):
@@ -331,6 +387,38 @@ class ZTPManager:
             )
 
     # ------------------------------------------------------------------
+    # Management IP pool allocation
+    # ------------------------------------------------------------------
+    def allocate_mgmt_ip(self) -> Optional[str]:
+        """Return the next available IP from the management pool.
+
+        Uses a lock so concurrent registrations never allocate the same IP.
+        Returns None when the pool is disabled or exhausted.
+        """
+        settings = self.get_settings()
+        if settings.get('ztp_mgmt_pool_enabled') != 'true':
+            return None
+        pool_start = settings.get('ztp_mgmt_pool_start', '').strip()
+        pool_end   = settings.get('ztp_mgmt_pool_end',   '').strip()
+        if not pool_start or not pool_end:
+            return None
+        with self._alloc_lock:
+            with self._conn() as db:
+                used = {r[0] for r in db.execute(
+                    "SELECT ip_address FROM devices WHERE ip_address IS NOT NULL"
+                ).fetchall()}
+            try:
+                start = int(ipaddress.IPv4Address(pool_start))
+                end   = int(ipaddress.IPv4Address(pool_end))
+            except ValueError:
+                return None
+            for ip_int in range(start, end + 1):
+                ip = str(ipaddress.IPv4Address(ip_int))
+                if ip not in used:
+                    return ip
+        return None
+
+    # ------------------------------------------------------------------
     # Network interfaces
     # ------------------------------------------------------------------
     def get_network_interfaces(self) -> list:
@@ -349,6 +437,7 @@ class ZTPManager:
             f"# Kármán auto-generated dnsmasq config\n"
             f"interface={s.get('ztp_dhcp_interface', 'eth0')}\n"
             f"bind-interfaces\n"
+            f"dhcp-authoritative\n"
             f"port=0\n"
             f"no-hosts\n"
             f"no-resolv\n"
@@ -362,10 +451,16 @@ class ZTPManager:
         )
 
     def start_dhcp(self, settings: dict) -> dict:
+        self.stop_dhcp()
+        # Prefer pure-Python server — no external binary needed
+        result = self._python_dhcp.start(settings)
+        if result['success']:
+            return result
+        # Fallback: dnsmasq
         if not shutil.which('dnsmasq'):
             return {'success': False,
-                    'message': 'dnsmasq not found — install with: apt-get install dnsmasq'}
-        self.stop_dhcp()
+                    'message': 'Python DHCP server failed and dnsmasq not found. '
+                               'Ensure the container has NET_BIND_SERVICE capability.'}
         with open(self.DNSMASQ_CONF, 'w') as f:
             f.write(self._dnsmasq_config(settings))
         try:
@@ -377,12 +472,16 @@ class ZTPManager:
             )
             if r.returncode != 0:
                 return {'success': False, 'message': r.stderr.strip() or 'dnsmasq failed to start'}
-            return {'success': True, 'message': 'DHCP server started'}
+            return {'success': True, 'message': 'DHCP server started (dnsmasq fallback)'}
         except Exception as e:
             return {'success': False, 'message': str(e)}
 
     def stop_dhcp(self) -> dict:
-        stopped = False
+        # Stop Python DHCP server
+        if self._python_dhcp.is_running():
+            self._python_dhcp.stop()
+        # Also stop any lingering dnsmasq
+        stopped_masq = False
         try:
             if os.path.exists(self.DNSMASQ_PID):
                 with open(self.DNSMASQ_PID) as f:
@@ -392,20 +491,41 @@ class ZTPManager:
                     os.remove(self.DNSMASQ_PID)
                 except FileNotFoundError:
                     pass
-                stopped = True
+                stopped_masq = True
         except (ProcessLookupError, ValueError, FileNotFoundError):
             pass
-        subprocess.run(['pkill', '-f', self.DNSMASQ_CONF], capture_output=True)
-        return {'success': True, 'message': 'DHCP server stopped' if stopped else 'DHCP server was not running'}
+        self._kill_by_cmdline(self.DNSMASQ_CONF)
+        return {'success': True, 'message': 'DHCP server stopped'}
+
+    def _kill_by_cmdline(self, substring: str):
+        """Kill processes whose /proc cmdline contains substring (pkill replacement)."""
+        try:
+            for entry in os.listdir('/proc'):
+                if not entry.isdigit():
+                    continue
+                try:
+                    cmdline_path = f'/proc/{entry}/cmdline'
+                    with open(cmdline_path, 'rb') as f:
+                        cmdline = f.read().replace(b'\x00', b' ').decode(errors='ignore')
+                    if substring in cmdline:
+                        os.kill(int(entry), signal.SIGTERM)
+                except (ProcessLookupError, FileNotFoundError, PermissionError):
+                    pass
+        except Exception:
+            pass
 
     def get_dhcp_status(self) -> dict:
+        # Python server takes priority
+        if self._python_dhcp.is_running():
+            return self._python_dhcp.get_status()
+        # Check dnsmasq as fallback
         if not os.path.exists(self.DNSMASQ_PID):
             return {'running': False}
         try:
             with open(self.DNSMASQ_PID) as f:
                 pid = int(f.read().strip())
             os.kill(pid, 0)   # raises if process gone
-            return {'running': True, 'pid': pid}
+            return {'running': True, 'pid': pid, 'backend': 'dnsmasq'}
         except (ProcessLookupError, ValueError, FileNotFoundError):
             return {'running': False}
 
@@ -431,5 +551,12 @@ class ZTPManager:
                                 settings.get('ztp_default_password', 'admin'))
         script = script.replace('__API_KEY__',
                                 settings.get('ztp_api_key', ''))
+        mgmt_enabled = settings.get('ztp_mgmt_pool_enabled') == 'true'
+        script = script.replace('__MGMT_PREFIX__',
+                                settings.get('ztp_mgmt_prefix', '24') if mgmt_enabled else '')
+        script = script.replace('__MGMT_GATEWAY__',
+                                settings.get('ztp_mgmt_gateway', '') if mgmt_enabled else '')
+        script = script.replace('__MGMT_IFACE__',
+                                settings.get('ztp_mgmt_iface', 'Management1'))
         script = script.replace('__BASE_CONFIG__', indented)
         return script

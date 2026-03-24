@@ -8,6 +8,13 @@ services:
     restart: unless-stopped
     network_mode: host  # Use host networking for direct access
 
+    # Required for dnsmasq built-in DHCP server (bind to port 67, raw socket)
+    cap_add:
+      - NET_BIND_SERVICE
+      - NET_RAW
+      - NET_ADMIN
+    user: root
+
     volumes:
       # Persistent database
       - ./data:/app/data
