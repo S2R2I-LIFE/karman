@@ -266,32 +266,66 @@
         <h6>How it works</h6>
         <ol class="text-muted small mb-3">
           <li>New Arista switch boots with no startup config and enters ZTP mode</li>
-          <li>Switch sends a DHCP request; server returns <strong>Option 67</strong> pointing to <code>/ztp/script</code></li>
+          <li>Switch sends a DHCP request; Kármán's built-in Python DHCP server responds (Arista devices only) with <strong>Option 67</strong> pointing to <code>/ztp/script</code></li>
           <li>EOS downloads and executes the Python script</li>
-          <li>Script writes the base config to <code>/mnt/flash/startup-config</code></li>
-          <li>Script calls back to <code>POST /api/devices/register</code></li>
-          <li>Kármán adds the device to inventory, notifies all admins, and the device appears on the dashboard within one telemetry cycle</li>
+          <li>Script calls <code>POST /api/devices/register</code> — Kármán allocates a permanent management IP from the pool (if enabled) and returns it</li>
+          <li>Script writes the base config to <code>/mnt/flash/startup-config</code>, prepending an <code>interface Management1</code> stanza with the permanent IP when the pool is enabled</li>
+          <li>Script installs the Kármán agent daemon, then reloads EOS</li>
+          <li>Switch comes back up on the permanent management IP and appears on the dashboard within one telemetry cycle</li>
         </ol>
+
         <h6>DHCP options</h6>
         <div class="row g-3 mb-3">
           <div class="col-md-6">
             <div class="card bg-body-secondary h-100">
               <div class="card-body">
-                <h6 class="card-title"><i class="bi bi-server"></i> Existing DHCP server</h6>
-                <p class="small text-muted mb-1">Add Option 67 to your DHCP server config:</p>
-                <code class="small">option bootfile-name "http://&lt;karman-ip&gt;:5000/ztp/script";</code>
+                <h6 class="card-title"><i class="bi bi-cpu"></i> Built-in Python DHCP server</h6>
+                <p class="small text-muted mb-1">
+                  Enable in <strong>Admin → ZTP → Built-in DHCP Server</strong>. Kármán runs a
+                  pure-Python DHCP server that responds <em>only</em> to packets whose vendor-class
+                  (option 60) contains <code>Arista</code>. All other clients (laptops, etc.) are
+                  silently ignored — your existing router continues to serve them. Requires
+                  <code>network_mode: host</code> and <code>NET_BIND_SERVICE</code> capability in
+                  <code>docker-compose.yml</code> (both set by default).
+                </p>
+                <p class="small text-muted mb-0">dnsmasq is used as a fallback if the Python server fails to bind port 67.</p>
               </div>
             </div>
           </div>
           <div class="col-md-6">
             <div class="card bg-body-secondary h-100">
               <div class="card-body">
-                <h6 class="card-title"><i class="bi bi-router"></i> Built-in DHCP server</h6>
-                <p class="small text-muted mb-0">Enable the dnsmasq-backed server in <strong>Admin → ZTP</strong>. Requires <code>dnsmasq</code> installed and <code>network_mode: host</code> in <code>docker-compose.yml</code>.</p>
+                <h6 class="card-title"><i class="bi bi-server"></i> Existing DHCP server</h6>
+                <p class="small text-muted mb-1">
+                  If you prefer to use your own DHCP server, add Option 67 scoped to Arista
+                  vendor-class so other devices are unaffected:
+                </p>
+                <pre class="small mb-1"><code># dnsmasq
+dhcp-match=set:arista,option:vendor-class,Arista
+dhcp-boot=tag:arista,http://&lt;karman-ip&gt;:5000/ztp/script</code></pre>
+                <pre class="small mb-0"><code># ISC DHCP
+class "arista" { match if option vendor-class-identifier ~~ "^Arista"; }
+subclass "arista" 1:&lt;mac&gt;;
+if member("arista") { option bootfile-name "http://&lt;karman-ip&gt;:5000/ztp/script"; }</code></pre>
               </div>
             </div>
           </div>
         </div>
+
+        <h6>Management IP pool</h6>
+        <p class="text-muted small mb-2">
+          When enabled (<strong>Admin → ZTP → Management IP Pool</strong>), Kármán automatically
+          assigns the next unused IP from the configured range to each new device at registration
+          time. The ZTP script then configures <code>interface Management1</code> with that static
+          address so the switch keeps the same IP after reboot — no manual IP assignment needed.
+        </p>
+        <ul class="text-muted small mb-3">
+          <li>Pool IPs are allocated in order, skipping any already present in the device inventory</li>
+          <li>A thread-safe lock prevents two simultaneously booting switches from receiving the same IP</li>
+          <li>The device is registered in inventory with the permanent IP, not the temporary DHCP address</li>
+          <li>Prefix length, gateway, and interface name are all configurable (default: <code>/24</code>, gateway from DHCP settings, <code>Management1</code>)</li>
+        </ul>
+
         <h6>Base config template variables</h6>
         <table class="table table-sm table-bordered mb-0">
           <thead><tr><th>Variable</th><th>Replaced with</th></tr></thead>
@@ -299,10 +333,15 @@
             <tr><td><code>{username}</code></td><td>Default credentials username</td></tr>
             <tr><td><code>{password}</code></td><td>Default credentials password</td></tr>
             <tr><td><code>{hostname}</code></td><td>Device hostname (from EOS <code>show hostname</code>)</td></tr>
-            <tr><td><code>{ip}</code></td><td>Management IP assigned by DHCP</td></tr>
+            <tr><td><code>{ip}</code></td><td>Permanent pool IP when management pool is enabled; DHCP address otherwise</td></tr>
             <tr><td><code>{karman_url}</code></td><td>Kármán base URL for callbacks</td></tr>
           </tbody>
         </table>
+        <p class="text-muted small mt-2 mb-0">
+          <i class="bi bi-info-circle"></i> The <code>interface Management1</code> stanza is
+          prepended automatically by the ZTP script when the pool is enabled — you do not need to
+          add it to the base config template.
+        </p>
       </div>
     </div>
 
@@ -430,7 +469,10 @@ daemon TerminAttr
             <tr><td>ZTP devices not registering</td><td>TerminAttr missing <code>-allowed-ips</code></td><td>Add <code>-allowed-ips=0.0.0.0/0</code> to TerminAttr exec line</td></tr>
             <tr><td>Agent badge stays "None"</td><td>Agent not installed or API key mismatch</td><td>Verify <code>daemon karman-agent</code> is in running-config; confirm API key in ZTP settings matches the one baked into agent script</td></tr>
             <tr><td>Agent installed but no config-loss alerts</td><td>Running config has &gt;20 lines after wipe</td><td>The &lt;20 line heuristic is a simple guard — check <code>show running-config | wc -l</code> after wipe; contact support if baseline differs</td></tr>
-            <tr><td>Built-in DHCP fails to start</td><td>dnsmasq not installed</td><td><code>apt install dnsmasq</code> on the host; set <code>network_mode: host</code></td></tr>
+            <tr><td>Built-in DHCP fails to bind port 67</td><td>Container lacks <code>NET_BIND_SERVICE</code> capability</td><td>Ensure <code>cap_add: [NET_BIND_SERVICE, NET_RAW, NET_ADMIN]</code> and <code>user: root</code> are set in <code>docker-compose.yml</code>, then <code>docker compose up -d</code></td></tr>
+            <tr><td>DHCP server running but switch still hits Arista cloud URL</td><td>Another DHCP server on the subnet wins the race without option 67</td><td>This is the intended design — Kármán's Python DHCP server responds only to Arista vendor-class packets. Verify the switch sends option 60 by running <code>tcpdump -i &lt;iface&gt; port 67 -v</code> and checking for "vendor-class" in the DISCOVER</td></tr>
+            <tr><td>Switch gets DHCP lease but wrong IP after reload</td><td>Management IP pool not enabled, or pool range exhausted</td><td>Enable the pool in <strong>Admin → ZTP → Management IP Pool</strong> and ensure the range has free IPs (check against devices already in inventory)</td></tr>
+            <tr><td>Two switches assigned the same pool IP</td><td>Race condition on concurrent registration</td><td>Should not occur — allocation uses a threading lock. If seen, check for duplicate hostnames in inventory; delete the stale entry and re-register</td></tr>
             <tr><td>500 on any page</td><td>Python exception in route</td><td>Run <code>docker logs custom-cvp-docker --tail=100</code> and look for Traceback</td></tr>
           </tbody>
         </table>
