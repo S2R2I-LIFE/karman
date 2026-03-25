@@ -275,3 +275,104 @@ Before committing any changes, check online sources for available updates to dep
 - `import time` is at top-level in `app.py` (needed for Prometheus query range calculations)
 - gnmic env var expansion works in `gnmic.yml` via `${VAR}` syntax
 - Reason field removed from register form and backend validation in `core/user.py`
+
+---
+
+## Zero Touch Provisioning (ZTP) — Current State (as of 2026-03-25)
+
+### What's Built and Working
+ZTP is fully end-to-end functional. A switch with no startup config boots, gets a DHCP lease
+from Kármán's built-in Python server, downloads and runs the ZTP script, registers itself in
+inventory with a permanent management IP, writes its own `interface Management1` stanza, and
+reloads onto that permanent IP. The device then appears in the dashboard within ~30s.
+
+### Key Files
+```
+core/dhcp_server.py       Pure-Python DHCP server (NEW) — Arista-only vendor-class filter
+core/ztp_manager.py       ZTPManager — settings, leases, script generation, mgmt IP pool
+web/templates/ztp.html    ZTP admin page — DHCP control, lease table, pool config
+```
+
+### Python DHCP Server (`core/dhcp_server.py`)
+- `PythonDHCPServer(get_settings_fn)` — thread-based, pure UDP/raw sockets
+- Responds **only** to packets with option 60 (vendor-class) containing `"Arista"` — all other
+  clients silently ignored (UCG-Ultra / router continues serving them normally)
+- Full DISCOVER → OFFER → REQUEST → ACK flow
+- Option 67 (boot file) always set to `<karman_url>/ztp/script`
+- Option 12 (client hostname) captured and stored in `_Pool` per MAC
+- Falls back to dnsmasq if Python server fails to bind port 67
+- `docker-compose.yml`: `user: root`, `cap_add: [NET_BIND_SERVICE, NET_RAW, NET_ADMIN]`
+- `Dockerfile`: `setcap` on dnsmasq binary
+
+### Management IP Pool
+- Configured via ZTP settings page: enable toggle, start/end IP, prefix length, gateway, iface
+- `ZTPManager.allocate_mgmt_ip()` — thread-safe, scans `devices` table to skip used IPs
+- ZTP script calls `register()` **first** (before `apply_base_config()`) to get permanent IP
+- `apply_base_config()` prepends `interface Management1` stanza if pool is enabled
+- Switch reloads onto permanent IP; Kármán registers device with that IP from the start
+- Default management interface: `Management1` (vEOS uses Management1, not Management0)
+
+### ZTP Script Flow (on-switch Python)
+1. `main()` → `register(url, dhcp_ip)` → POST `/api/devices/register` → returns `{mgmt_ip, mgmt_prefix, mgmt_gateway}`
+2. If `mgmt_ip` returned → `config_ip = mgmt_ip`, else fall back to DHCP IP
+3. `apply_base_config(hostname, config_ip)` — writes startup-config with Management1 if pool enabled
+4. Switch reloads with permanent IP
+
+### `/api/devices/register` Route Behavior
+- Allocates permanent IP from pool (if enabled)
+- Probes `ip` (DHCP IP) for management type — NOT the permanent IP (switch still has DHCP IP at this point)
+- Returns `{success, mgmt_ip, mgmt_prefix, mgmt_gateway}`
+- If device already exists: returns existing `mgmt_ip` (idempotent)
+
+### ZTP Lease Table (`ztp_leases` DB table)
+- Columns: `mac_address PK, ip_address, device_hostname, first_seen, last_seen, registered, ignored`
+- `ignored` column added via `ALTER TABLE` migration in `ZTPManager._init_db()`
+- Ignore/unignore routes: `POST /api/ztp/leases/<mac>/ignore` and `/unignore`
+- Delete route: `POST /api/ztp/leases/<mac>/delete`
+- `delete_lease_by_hostname(hostname)` called from `delete_device` route — cleans up lease on inventory deletion
+- UI: ignored rows hidden by default, "Show ignored" toggle in card header, faded with Unignore+Delete buttons
+
+### ZTP Settings Keys (in `app_settings` table)
+| Key | Purpose |
+|-----|---------|
+| `ztp_enabled` | Master on/off |
+| `ztp_karman_url` | Base URL injected into script as option 67 and `__KARMAN_URL__` |
+| `ztp_dhcp_interface` | Network interface to bind DHCP server on |
+| `ztp_dhcp_range_start/end` | IP pool for ZTP DHCP leases |
+| `ztp_dhcp_netmask/gateway/dns` | DHCP offer options |
+| `ztp_mgmt_pool_enabled` | Whether to allocate permanent management IPs |
+| `ztp_mgmt_pool_start/end` | Permanent IP range |
+| `ztp_mgmt_prefix` | Subnet prefix length (default `24`) |
+| `ztp_mgmt_gateway` | Gateway written into Management1 stanza |
+| `ztp_mgmt_iface` | Management interface name (default `Management1`) |
+
+### Known Gotchas
+- **DHCP probe timing**: During ZTP the switch only has its DHCP IP — probe management type
+  against the DHCP IP, not the permanent IP. The `api_device_register` route does this correctly.
+- **`timeago` filter**: Handles `int`/`float` Unix timestamps via `datetime.fromtimestamp()`.
+  Do NOT pipe through `| int` in templates — the filter handles raw floats directly.
+- **Lease orphans**: Deleting a device from inventory now auto-deletes its ZTP lease. Previously
+  ignored leases (set before deletion) were NOT auto-cleaned — must be manually deleted or will
+  show up in the lease table after device is gone.
+- **Port 67 bind**: Requires `user: root` in docker-compose.yml and `NET_BIND_SERVICE` cap.
+  If Python server fails to bind, check `docker logs custom-cvp-docker` for the OSError.
+
+---
+
+## Planned Next Features (from plan file `mossy-moseying-perlis.md`)
+
+Four features are designed and ready to implement:
+
+1. **Threshold Alerting** — `core/alert_manager.py` (new), alert_rules + alert_events tables,
+   background loop every 30s, email + in-app notifications, admin UI at `/admin/alerts`
+
+2. **Scheduled Config Backups** — `_do_device_backup()` helper, background loop checks schedule,
+   `last_backup_at` column on devices, "Last Backup" column in device list
+
+3. **Compliance / Drift Detection** — SHA256 diff on running config, `config_prev_<hostname>` in
+   app_settings for before/after diff, `/compliance` page with unified diff modal
+
+4. **BGP Dashboard** — fleet-wide BGP peer status from telemetry cache, filter bar, state-change
+   notifications, `/bgp` page
+
+See plan file for full schema, routes, templates, and implementation order.

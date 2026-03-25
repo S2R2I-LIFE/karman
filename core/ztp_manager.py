@@ -400,6 +400,11 @@ class ZTPManager:
         with self._conn() as db:
             db.execute("DELETE FROM ztp_leases WHERE mac_address=?", (mac,))
 
+    def delete_lease_by_hostname(self, hostname: str):
+        """Remove the ZTP lease record associated with a device hostname."""
+        with self._conn() as db:
+            db.execute("DELETE FROM ztp_leases WHERE device_hostname=?", (hostname,))
+
     def record_registration(self, mac: str, device_hostname: str):
         if not mac:
             return

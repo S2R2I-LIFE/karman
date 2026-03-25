@@ -1457,6 +1457,8 @@ def delete_device(hostname):
         success = inventory_mgr.delete_device(hostname)
         if success:
             app.logger.info(f"Device {hostname} deleted successfully")
+            # Clean up any ZTP lease record that references this device
+            ztp_mgr.delete_lease_by_hostname(hostname)
             flash(f'Device {hostname} deleted successfully', 'success')
             return jsonify({'success': True, 'message': f'Device {hostname} deleted'}), 200
         else:
