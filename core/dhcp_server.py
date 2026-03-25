@@ -101,6 +101,10 @@ class _Pkt:
     def requested_ip(self) -> bytes:
         return self.options.get(50, b'')   # option 50 = requested IP
 
+    @property
+    def client_hostname(self) -> str:
+        return self.options.get(12, b'').decode('ascii', errors='replace').strip('\x00')
+
 
 # ---------------------------------------------------------------------------
 # Packet builder helpers
@@ -165,12 +169,15 @@ class _Pool:
     """Simple in-memory IP pool.  Allocations survive as long as the server thread runs."""
 
     def __init__(self):
-        self._mac_to_ip: dict[str, str] = {}
+        self._mac_to_ip:       dict[str, str] = {}
+        self._mac_to_hostname: dict[str, str] = {}
         self._used: set[str] = set()
         self._lock = threading.Lock()
 
-    def allocate(self, mac: str, start: str, end: str) -> str | None:
+    def allocate(self, mac: str, start: str, end: str, hostname: str = '') -> str | None:
         with self._lock:
+            if hostname:
+                self._mac_to_hostname[mac] = hostname
             if mac in self._mac_to_ip:
                 return self._mac_to_ip[mac]
             try:
@@ -190,11 +197,15 @@ class _Pool:
         return self._mac_to_ip.get(mac)
 
     def leases(self) -> list[dict]:
-        return [{'mac': m, 'ip': i} for m, i in self._mac_to_ip.items()]
+        return [
+            {'mac': m, 'ip': i, 'hostname': self._mac_to_hostname.get(m, '')}
+            for m, i in self._mac_to_ip.items()
+        ]
 
     def clear(self):
         with self._lock:
             self._mac_to_ip.clear()
+            self._mac_to_hostname.clear()
             self._used.clear()
 
 
@@ -327,7 +338,7 @@ class PythonDHCPServer:
         server_ip = self._server_ip or '0.0.0.0'
 
         if pkt.msg_type == MSG_DISCOVER:
-            offered = self._pool.allocate(pkt.mac, pool_start, pool_end)
+            offered = self._pool.allocate(pkt.mac, pool_start, pool_end, pkt.client_hostname)
             if not offered:
                 log.warning('DHCP pool exhausted — cannot serve %s', pkt.mac)
                 return

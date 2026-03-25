@@ -389,15 +389,50 @@
 
 </form>
 
+<!-- Register modal (for leases without a hostname) -->
+<div class="modal fade" id="registerModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-plus-circle"></i> Register Device</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Hostname <span class="text-danger">*</span></label>
+          <input type="text" class="form-control" id="reg-hostname" placeholder="e.g. leaf-01">
+        </div>
+        <div class="mb-0">
+          <label class="form-label">IP Address</label>
+          <input type="text" class="form-control" id="reg-ip" readonly>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="submitRegister()">
+          <i class="bi bi-plus-circle"></i> Register
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ── Active Leases ─────────────────────────────────────────────────────── -->
 <div class="row mb-4">
   <div class="col-12">
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="mb-0"><i class="bi bi-list-ul"></i> Active DHCP Leases</h5>
-        <button class="btn btn-sm btn-outline-secondary" onclick="refreshLeases()">
-          <i class="bi bi-arrow-clockwise"></i> Refresh
-        </button>
+        <div class="d-flex align-items-center gap-2">
+          <div class="form-check form-switch mb-0">
+            <input class="form-check-input" type="checkbox" id="show-ignored"
+                   onchange="refreshLeases()">
+            <label class="form-check-label small" for="show-ignored">Show ignored</label>
+          </div>
+          <button class="btn btn-sm btn-outline-secondary" onclick="refreshLeases()">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+          </button>
+        </div>
       </div>
       <div class="card-body p-0">
         <div class="table-responsive">
@@ -415,12 +450,13 @@
             </thead>
             <tbody id="leases-body">
               {% for lease in leases %}
+              {% if not lease.ignored %}
               <tr>
                 <td class="font-monospace small">{{ lease.mac_address }}</td>
                 <td>{{ lease.ip_address }}</td>
                 <td>{{ lease.hostname or '—' }}</td>
-                <td class="text-muted small">{{ lease.first_seen | int | timeago if lease.first_seen else '—' }}</td>
-                <td class="text-muted small">{{ lease.last_seen  | int | timeago if lease.last_seen  else '—' }}</td>
+                <td class="text-muted small">{{ lease.first_seen | timeago if lease.first_seen else '—' }}</td>
+                <td class="text-muted small">{{ lease.last_seen  | timeago if lease.last_seen  else '—' }}</td>
                 <td>
                   {% if lease.registered %}
                   <span class="badge bg-success">
@@ -433,19 +469,26 @@
                   {% endif %}
                 </td>
                 <td>
-                  {% if not lease.registered and lease.ip_address and lease.hostname %}
-                  <button class="btn btn-sm btn-outline-primary"
-                          onclick="manualRegister('{{ lease.hostname }}', '{{ lease.ip_address }}', '{{ lease.mac_address }}')">
-                    <i class="bi bi-plus-circle"></i> Register
-                  </button>
-                  {% elif lease.device_hostname %}
-                  <a href="{{ url_for('device_detail', hostname=lease.device_hostname) }}"
-                     class="btn btn-sm btn-outline-secondary">
-                    <i class="bi bi-box-arrow-up-right"></i> View
-                  </a>
+                  <div class="d-flex gap-1">
+                  {% if lease.registered and lease.device_hostname %}
+                    <a href="{{ url_for('device_detail', hostname=lease.device_hostname) }}"
+                       class="btn btn-sm btn-outline-secondary">
+                      <i class="bi bi-box-arrow-up-right"></i> View
+                    </a>
+                  {% elif not lease.registered and lease.ip_address %}
+                    <button class="btn btn-sm btn-outline-primary"
+                            onclick="manualRegister('{{ lease.hostname }}', '{{ lease.ip_address }}', '{{ lease.mac_address }}')">
+                      <i class="bi bi-plus-circle"></i> Register
+                    </button>
                   {% endif %}
+                    <button class="btn btn-sm btn-outline-secondary" title="Ignore"
+                            onclick="ignoreLease('{{ lease.mac_address }}', true)">
+                      <i class="bi bi-eye-slash"></i>
+                    </button>
+                  </div>
                 </td>
               </tr>
+              {% endif %}
               {% else %}
               <tr id="no-leases-row">
                 <td colspan="7" class="text-center text-muted py-4">
@@ -590,42 +633,88 @@ function dhcpAction(action) {
 }
 
 // Refresh leases table
+let _regMac = '', _regIp = '';
+
 function refreshLeases() {
+  const showIgnored = document.getElementById('show-ignored')?.checked;
   fetch('/api/ztp/leases')
     .then(r => r.json())
-    .then(leases => {
+    .then(all => {
+      const leases = showIgnored ? all : all.filter(l => !l.ignored);
       const tbody = document.getElementById('leases-body');
       if (!leases.length) {
         tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">
-          No DHCP leases yet.</td></tr>`;
+          No DHCP leases${showIgnored ? '' : ' (some may be hidden — enable "Show ignored")'}.</td></tr>`;
         return;
       }
-      tbody.innerHTML = leases.map(l => `
-        <tr>
+      tbody.innerHTML = leases.map(l => {
+        const ts = t => t ? new Date(t*1000).toLocaleString() : '—';
+        const status = l.registered
+          ? '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Registered</span>'
+          : l.ignored
+            ? '<span class="badge bg-secondary"><i class="bi bi-eye-slash"></i> Ignored</span>'
+            : '<span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split"></i> Pending</span>';
+        const mac = l.mac_address.replace(/'/g, "\\'");
+        let action = '';
+        if (l.registered && l.device_hostname) {
+          action += `<a href="/devices/${l.device_hostname}" class="btn btn-sm btn-outline-secondary">
+                       <i class="bi bi-box-arrow-up-right"></i> View</a>`;
+        } else if (!l.registered && l.ip_address) {
+          action += `<button class="btn btn-sm btn-outline-primary"
+                       onclick="manualRegister('${l.hostname || ''}','${l.ip_address}','${mac}')">
+                       <i class="bi bi-plus-circle"></i> Register</button>`;
+        }
+        if (l.ignored) {
+          action += ` <button class="btn btn-sm btn-outline-secondary" title="Unignore"
+                        onclick="ignoreLease('${mac}', false)">
+                        <i class="bi bi-eye"></i></button>`;
+          action += ` <button class="btn btn-sm btn-outline-danger" title="Delete"
+                        onclick="deleteLease('${mac}')">
+                        <i class="bi bi-trash"></i></button>`;
+        } else {
+          action += ` <button class="btn btn-sm btn-outline-secondary" title="Ignore"
+                        onclick="ignoreLease('${mac}', true)">
+                        <i class="bi bi-eye-slash"></i></button>`;
+        }
+        const rowClass = l.ignored ? 'opacity-50' : '';
+        return `<tr class="${rowClass}">
           <td class="font-monospace small">${l.mac_address}</td>
           <td>${l.ip_address || '—'}</td>
           <td>${l.hostname || '—'}</td>
-          <td class="text-muted small">${l.first_seen ? new Date(l.first_seen*1000).toLocaleString() : '—'}</td>
-          <td class="text-muted small">${l.last_seen  ? new Date(l.last_seen *1000).toLocaleString() : '—'}</td>
-          <td>${l.registered
-            ? '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Registered</span>'
-            : '<span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split"></i> Pending</span>'}</td>
-          <td>${!l.registered && l.ip_address && l.hostname
-            ? `<button class="btn btn-sm btn-outline-primary"
-                onclick="manualRegister('${l.hostname}','${l.ip_address}','${l.mac_address}')">
-                <i class="bi bi-plus-circle"></i> Register</button>`
-            : l.device_hostname
-              ? `<a href="/devices/${l.device_hostname}" class="btn btn-sm btn-outline-secondary">
-                  <i class="bi bi-box-arrow-up-right"></i> View</a>`
-              : ''}</td>
-        </tr>`).join('');
+          <td class="text-muted small">${ts(l.first_seen)}</td>
+          <td class="text-muted small">${ts(l.last_seen)}</td>
+          <td>${status}</td>
+          <td><div class="d-flex gap-1">${action}</div></td>
+        </tr>`;
+      }).join('');
     })
     .catch(e => showToast('Failed to refresh leases: ' + e, false));
 }
 
-// Manual register a pending lease
 function manualRegister(hostname, ip, mac) {
-  if (!confirm(`Register ${hostname} (${ip}) in Kármán?`)) return;
+  _regMac = mac;
+  _regIp  = ip;
+  if (hostname) {
+    // Has hostname — confirm and register directly
+    if (!confirm(`Register ${hostname} (${ip}) in Kármán?`)) return;
+    _submitRegisterWith(hostname, ip, mac);
+  } else {
+    // No hostname — show modal
+    document.getElementById('reg-hostname').value = '';
+    document.getElementById('reg-ip').value = ip;
+    new bootstrap.Modal(document.getElementById('registerModal')).show();
+    setTimeout(() => document.getElementById('reg-hostname').focus(), 300);
+  }
+}
+
+function submitRegister() {
+  const hostname = document.getElementById('reg-hostname').value.trim();
+  if (!hostname) { document.getElementById('reg-hostname').classList.add('is-invalid'); return; }
+  bootstrap.Modal.getInstance(document.getElementById('registerModal')).hide();
+  _submitRegisterWith(hostname, _regIp, _regMac);
+}
+
+function _submitRegisterWith(hostname, ip, mac) {
   fetch('/api/devices/register', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -637,6 +726,19 @@ function manualRegister(hostname, ip, mac) {
     if (data.success) setTimeout(refreshLeases, 800);
   })
   .catch(e => showToast('Registration failed: ' + e, false));
+}
+
+function ignoreLease(mac, ignore) {
+  fetch(`/api/ztp/leases/${encodeURIComponent(mac)}/${ignore ? 'ignore' : 'unignore'}`, {method: 'POST'})
+    .then(() => refreshLeases())
+    .catch(e => showToast('Failed: ' + e, false));
+}
+
+function deleteLease(mac) {
+  if (!confirm('Permanently delete this lease record?')) return;
+  fetch(`/api/ztp/leases/${encodeURIComponent(mac)}/delete`, {method: 'POST'})
+    .then(() => refreshLeases())
+    .catch(e => showToast('Failed: ' + e, false));
 }
 </script>
 {% endblock %}

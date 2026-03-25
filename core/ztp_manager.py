@@ -282,15 +282,21 @@ class ZTPManager:
         with self._conn() as db:
             db.execute('''
                 CREATE TABLE IF NOT EXISTS ztp_leases (
-                    mac_address    TEXT PRIMARY KEY,
-                    ip_address     TEXT,
-                    hostname       TEXT,
-                    first_seen     REAL,
-                    last_seen      REAL,
-                    registered     INTEGER DEFAULT 0,
-                    device_hostname TEXT
+                    mac_address     TEXT PRIMARY KEY,
+                    ip_address      TEXT,
+                    hostname        TEXT,
+                    first_seen      REAL,
+                    last_seen       REAL,
+                    registered      INTEGER DEFAULT 0,
+                    device_hostname TEXT,
+                    ignored         INTEGER DEFAULT 0
                 )
             ''')
+            # Migration: add ignored column to existing tables
+            try:
+                db.execute('ALTER TABLE ztp_leases ADD COLUMN ignored INTEGER DEFAULT 0')
+            except Exception:
+                pass  # column already exists
             # Seed default base config only if not already set
             db.execute(
                 "INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
@@ -322,16 +328,18 @@ class ZTPManager:
     # ------------------------------------------------------------------
     # DHCP leases
     # ------------------------------------------------------------------
-    def get_leases(self) -> list:
+    def get_leases(self, include_ignored: bool = True) -> list:
         # Sync in-memory Python DHCP leases → DB
         if self._python_dhcp.is_running():
             self._sync_python_leases()
         else:
             self._sync_dnsmasq_leases()
         with self._conn() as db:
-            rows = db.execute(
-                "SELECT * FROM ztp_leases ORDER BY last_seen DESC"
-            ).fetchall()
+            query = "SELECT * FROM ztp_leases"
+            if not include_ignored:
+                query += " WHERE ignored=0"
+            query += " ORDER BY last_seen DESC"
+            rows = db.execute(query).fetchall()
         return [dict(r) for r in rows]
 
     def _sync_python_leases(self):
@@ -341,15 +349,18 @@ class ZTPManager:
             return
         with self._conn() as db:
             for entry in leases:
-                mac = entry['mac']
-                ip  = entry['ip']
+                mac      = entry['mac']
+                ip       = entry['ip']
+                hostname = entry.get('hostname', '')
                 db.execute('''
                     INSERT INTO ztp_leases (mac_address, ip_address, hostname, first_seen, last_seen)
                     VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(mac_address) DO UPDATE SET
                         ip_address = excluded.ip_address,
+                        hostname   = CASE WHEN excluded.hostname != '' THEN excluded.hostname
+                                         ELSE hostname END,
                         last_seen  = excluded.last_seen
-                ''', (mac, ip, '', now, now))
+                ''', (mac, ip, hostname, now, now))
 
     def _sync_dnsmasq_leases(self):
         if not os.path.exists(self.DNSMASQ_LEASES):
@@ -376,6 +387,18 @@ class ZTPManager:
                     ''', (mac, ip, name, now, now))
         except Exception as e:
             print(f"[ZTP] Error syncing dnsmasq leases: {e}")
+
+    def ignore_lease(self, mac: str):
+        with self._conn() as db:
+            db.execute("UPDATE ztp_leases SET ignored=1 WHERE mac_address=?", (mac,))
+
+    def unignore_lease(self, mac: str):
+        with self._conn() as db:
+            db.execute("UPDATE ztp_leases SET ignored=0 WHERE mac_address=?", (mac,))
+
+    def delete_lease(self, mac: str):
+        with self._conn() as db:
+            db.execute("DELETE FROM ztp_leases WHERE mac_address=?", (mac,))
 
     def record_registration(self, mac: str, device_hostname: str):
         if not mac:

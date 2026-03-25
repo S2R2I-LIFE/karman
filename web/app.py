@@ -773,10 +773,12 @@ def format_datetime(value):
 
 @app.template_filter('timeago')
 def timeago(value):
+    if isinstance(value, (int, float)):
+        value = datetime.fromtimestamp(value)
     if isinstance(value, str):
         try:
             value = datetime.fromisoformat(value)
-        except:
+        except Exception:
             return value
     if isinstance(value, datetime):
         now = datetime.now()
@@ -4664,10 +4666,13 @@ def api_device_register():
     mgmt_ip = ztp_mgr.allocate_mgmt_ip()
     device_ip = mgmt_ip or ip   # permanent IP takes priority over DHCP IP
 
-    # Detect or use configured management type
+    # Detect or use configured management type.
+    # Probe the current DHCP IP (ip) — the switch has this address right now during ZTP.
+    # The permanent IP (device_ip) isn't configured on the switch until after it reloads,
+    # so probing it would always fail and fall back to eAPI unnecessarily.
     mgmt_str = settings.get('ztp_default_mgmt_type', 'auto')
     if mgmt_str == 'auto':
-        mgmt_str = _probe_mgmt_type(device_ip)
+        mgmt_str = _probe_mgmt_type(ip or device_ip)
 
     try:
         device = Device(
@@ -4730,6 +4735,27 @@ def admin_ztp_dhcp_stop():
 @admin_required
 def api_ztp_leases():
     return jsonify(ztp_mgr.get_leases())
+
+
+@app.route('/api/ztp/leases/<mac>/ignore', methods=['POST'])
+@admin_required
+def api_ztp_lease_ignore(mac):
+    ztp_mgr.ignore_lease(mac)
+    return jsonify({'success': True})
+
+
+@app.route('/api/ztp/leases/<mac>/unignore', methods=['POST'])
+@admin_required
+def api_ztp_lease_unignore(mac):
+    ztp_mgr.unignore_lease(mac)
+    return jsonify({'success': True})
+
+
+@app.route('/api/ztp/leases/<mac>/delete', methods=['POST'])
+@admin_required
+def api_ztp_lease_delete(mac):
+    ztp_mgr.delete_lease(mac)
+    return jsonify({'success': True})
 
 
 @app.route('/api/ztp/status')
