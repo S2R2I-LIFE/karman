@@ -116,13 +116,27 @@ def _pack_ip(ip_str: str) -> bytes:
         return b'\x00\x00\x00\x00'
 
 
+def _prefix_to_netmask(prefix_len: int) -> str:
+    """Convert a CIDR prefix length (e.g. 24) to dotted-decimal netmask."""
+    try:
+        return str(ipaddress.IPv4Network(f'0.0.0.0/{prefix_len}').netmask)
+    except ValueError:
+        return '255.255.255.0'
+
+
 def _build_reply(pkt: _Pkt, msg_type: int, offered_ip: str,
                  server_ip: str, settings: dict) -> bytes:
     """Build a DHCP OFFER or ACK packet."""
     boot_url  = settings.get('ztp_karman_url', '').rstrip('/') + '/ztp/script'
-    subnet    = settings.get('ztp_dhcp_netmask',  '255.255.255.0')
-    gateway   = settings.get('ztp_dhcp_gateway',  '')
-    dns       = settings.get('ztp_dhcp_dns',       '8.8.8.8')
+    dns       = settings.get('ztp_dhcp_dns', '8.8.8.8')
+    # When the management pool is active the DHCP IPs are the permanent management
+    # IPs, so use the pool's gateway and prefix instead of the DHCP-range values.
+    if settings.get('ztp_mgmt_pool_enabled') == 'true' and settings.get('ztp_mgmt_pool_start'):
+        subnet  = _prefix_to_netmask(int(settings.get('ztp_mgmt_prefix', '24')))
+        gateway = settings.get('ztp_mgmt_gateway', '')
+    else:
+        subnet  = settings.get('ztp_dhcp_netmask', '255.255.255.0')
+        gateway = settings.get('ztp_dhcp_gateway', '')
 
     # Fixed header (236 bytes)
     buf = bytearray(236)
@@ -174,7 +188,8 @@ class _Pool:
         self._used: set[str] = set()
         self._lock = threading.Lock()
 
-    def allocate(self, mac: str, start: str, end: str, hostname: str = '') -> str | None:
+    def allocate(self, mac: str, start: str, end: str, hostname: str = '',
+                 exclude_ips=None) -> str | None:
         with self._lock:
             if hostname:
                 self._mac_to_hostname[mac] = hostname
@@ -187,7 +202,7 @@ class _Pool:
                 return None
             for ip_int in range(s, e + 1):
                 ip = str(ipaddress.IPv4Address(ip_int))
-                if ip not in self._used:
+                if ip not in self._used and (not exclude_ips or ip not in exclude_ips):
                     self._mac_to_ip[mac] = ip
                     self._used.add(ip)
                     return ip
@@ -236,8 +251,9 @@ class PythonDHCPServer:
         srv.stop()
     """
 
-    def __init__(self, get_settings_fn):
-        self._get_settings = get_settings_fn
+    def __init__(self, get_settings_fn, get_used_ips_fn=None):
+        self._get_settings  = get_settings_fn
+        self._get_used_ips  = get_used_ips_fn   # optional: () -> set[str] of DB-resident IPs
         self._pool          = _Pool()
         self._thread: threading.Thread | None = None
         self._stop          = threading.Event()
@@ -283,6 +299,10 @@ class PythonDHCPServer:
     def get_leases(self) -> list[dict]:
         return self._pool.leases()
 
+    def get_pool_ip_for_mac(self, mac: str) -> str | None:
+        """Return the IP this server's pool already allocated for mac, or None."""
+        return self._pool.lookup(mac)
+
     # ------------------------------------------------------------------
     def _run(self, settings: dict):
         iface     = settings.get('ztp_dhcp_interface', 'eth0')
@@ -302,8 +322,17 @@ class PythonDHCPServer:
             log.error('DHCP server failed to bind port 67: %s', exc)
             return
 
-        pool_start = settings.get('ztp_dhcp_range_start', '192.168.2.100')
-        pool_end   = settings.get('ztp_dhcp_range_end',   '192.168.2.200')
+        # When management pool is enabled, allocate DHCP IPs from that range so
+        # the lease address IS the permanent management IP (no IP change on reload).
+        if (settings.get('ztp_mgmt_pool_enabled') == 'true'
+                and settings.get('ztp_mgmt_pool_start')):
+            pool_start = settings.get('ztp_mgmt_pool_start')
+            pool_end   = settings.get('ztp_mgmt_pool_end', pool_start)
+            log.info('DHCP server using management pool range %s – %s', pool_start, pool_end)
+        else:
+            pool_start = settings.get('ztp_dhcp_range_start', '192.168.2.100')
+            pool_end   = settings.get('ztp_dhcp_range_end',   '192.168.2.200')
+            log.info('DHCP server using DHCP range %s – %s', pool_start, pool_end)
 
         with sock:
             while not self._stop.is_set():
@@ -338,7 +367,10 @@ class PythonDHCPServer:
         server_ip = self._server_ip or '0.0.0.0'
 
         if pkt.msg_type == MSG_DISCOVER:
-            offered = self._pool.allocate(pkt.mac, pool_start, pool_end, pkt.client_hostname)
+            # Exclude IPs already used by registered devices so a pool restart
+            # never re-offers an IP that has been permanently assigned.
+            exclude = self._get_used_ips() if self._get_used_ips else None
+            offered = self._pool.allocate(pkt.mac, pool_start, pool_end, pkt.client_hostname, exclude)
             if not offered:
                 log.warning('DHCP pool exhausted — cannot serve %s', pkt.mac)
                 return

@@ -4664,8 +4664,10 @@ def api_device_register():
                         'message': 'Auto-add disabled — device queued for manual review',
                         'mgmt_ip': ''})
 
-    # Allocate a permanent management IP from the pool (if enabled)
-    mgmt_ip = ztp_mgr.allocate_mgmt_ip()
+    # Allocate a permanent management IP from the pool (if enabled).
+    # Passing mac lets the allocator return the same IP the DHCP server already
+    # offered to this switch, keeping DHCP IP == inventory IP == static config IP.
+    mgmt_ip = ztp_mgr.allocate_mgmt_ip(mac=mac)
     device_ip = mgmt_ip or ip   # permanent IP takes priority over DHCP IP
 
     # Detect or use configured management type.

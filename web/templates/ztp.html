@@ -176,6 +176,16 @@
             <input type="text" class="form-control" name="ztp_dhcp_dns"
                    value="{{ settings.ztp_dhcp_dns }}" placeholder="8.8.8.8">
           </div>
+          <div class="col-12" id="dhcp-range-pool-note"
+               {% if settings.ztp_mgmt_pool_enabled != 'true' %}style="display:none"{% endif %}>
+            <div class="alert alert-info py-2 mb-0 small">
+              <i class="bi bi-info-circle"></i>
+              <strong>Management IP Pool is enabled.</strong>
+              The DHCP server will allocate IPs directly from the pool range above, so each
+              switch receives its permanent management IP as its DHCP lease — no IP change on
+              reload. The range fields here are kept as a fallback for non-pool mode only.
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -296,10 +306,11 @@
             Assign permanent management IPs from pool
           </label>
           <div class="form-text">
-            When enabled, each new device is automatically assigned the next available static IP
-            from this range. The ZTP script configures <code>interface {{ settings.ztp_mgmt_iface or 'Management1' }}</code>
-            with that IP so the switch keeps the same address after reboot.
-            The device is added to inventory using the permanent IP, not the temporary DHCP address.
+            When enabled, the built-in DHCP server allocates IPs from this pool rather than the
+            DHCP range, so the switch's DHCP lease address <em>is</em> its permanent management IP.
+            The ZTP script writes a static <code>interface {{ settings.ztp_mgmt_iface or 'Management1' }}</code>
+            stanza with the same IP, so the address is unchanged after reload. Multiple switches
+            adopting simultaneously each receive a unique pool IP in their DHCP offer.
           </div>
         </div>
         <div id="pool-fields" {% if settings.ztp_mgmt_pool_enabled != 'true' %}style="display:none"{% endif %}>
@@ -575,6 +586,7 @@ function toggleBanner(enabled) {
 
 function togglePoolFields(enabled) {
   document.getElementById('pool-fields').style.display = enabled ? '' : 'none';
+  document.getElementById('dhcp-range-pool-note').style.display = enabled ? '' : 'none';
 }
 
 function updateScriptUrl(base) {

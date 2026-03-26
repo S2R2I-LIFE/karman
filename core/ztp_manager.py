@@ -76,6 +76,28 @@ def get_mgmt_ip():
     return ""
 
 
+def get_mac():
+    """Return the MAC address of the management interface."""
+    # FastCli is authoritative — EOS interface names don't always map to sysfs names
+    out = run_cli(f"show interfaces {MGMT_IFACE}")
+    for line in out.splitlines():
+        if "Hardware is" in line and "address is" in line:
+            # "  Hardware is Ethernet, address is 50:00:00:cb:00:00"
+            parts = line.split("address is")
+            if len(parts) > 1:
+                return parts[-1].strip().split()[0].rstrip(",")
+    # Fallback: sysfs (works on vEOS-lab where ma0/ma1 match Management0/Management1)
+    for iface in [MGMT_IFACE, 'Management1', 'Management0', 'ma1', 'ma0']:
+        try:
+            with open(f'/sys/class/net/{iface}/address') as f:
+                mac = f.read().strip()
+                if mac and mac != '00:00:00:00:00:00':
+                    return mac
+        except Exception:
+            pass
+    return ""
+
+
 def apply_base_config(hostname, config_ip):
     try:
         config = BASE_CONFIG.format(
@@ -113,6 +135,7 @@ def register(hostname, ip):
     payload = json.dumps({
         "hostname": hostname,
         "ip": ip,
+        "mac": get_mac(),
         "source": "ztp",
         "api_key": API_KEY,
     }).encode()
@@ -266,7 +289,7 @@ class ZTPManager:
 
     def __init__(self, db_path: str):
         self.db_path = db_path
-        self._python_dhcp = PythonDHCPServer(self.get_settings)
+        self._python_dhcp = PythonDHCPServer(self.get_settings, self._get_used_ips)
         self._alloc_lock  = threading.Lock()
         self._init_db()
 
@@ -302,6 +325,17 @@ class ZTPManager:
                 "INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
                 ('ztp_base_config', DEFAULT_BASE_CONFIG)
             )
+
+    # ------------------------------------------------------------------
+    # Used-IP helper (passed to DHCP server to avoid re-allocating registered IPs)
+    # ------------------------------------------------------------------
+    def _get_used_ips(self) -> set:
+        """Return the set of IP addresses already assigned to registered devices."""
+        with self._conn() as db:
+            rows = db.execute(
+                "SELECT ip_address FROM devices WHERE ip_address IS NOT NULL AND ip_address != ''"
+            ).fetchall()
+        return {r[0] for r in rows}
 
     # ------------------------------------------------------------------
     # Settings
@@ -417,8 +451,13 @@ class ZTPManager:
     # ------------------------------------------------------------------
     # Management IP pool allocation
     # ------------------------------------------------------------------
-    def allocate_mgmt_ip(self) -> Optional[str]:
+    def allocate_mgmt_ip(self, mac: str = None) -> Optional[str]:
         """Return the next available IP from the management pool.
+
+        When the DHCP server is running with pool mode active it will have already
+        allocated a pool IP for each switch via DHCP.  Passing the switch MAC lets
+        us return that same IP rather than allocating a second one — ensuring the
+        IP the switch received by DHCP matches the one recorded in inventory.
 
         Uses a lock so concurrent registrations never allocate the same IP.
         Returns None when the pool is disabled or exhausted.
@@ -426,15 +465,23 @@ class ZTPManager:
         settings = self.get_settings()
         if settings.get('ztp_mgmt_pool_enabled') != 'true':
             return None
+
+        # If the DHCP server already gave this MAC a pool IP, honour that allocation.
+        if mac and self._python_dhcp.is_running():
+            dhcp_ip = self._python_dhcp.get_pool_ip_for_mac(mac)
+            if dhcp_ip:
+                return dhcp_ip
+
         pool_start = settings.get('ztp_mgmt_pool_start', '').strip()
         pool_end   = settings.get('ztp_mgmt_pool_end',   '').strip()
         if not pool_start or not pool_end:
             return None
         with self._alloc_lock:
-            with self._conn() as db:
-                used = {r[0] for r in db.execute(
-                    "SELECT ip_address FROM devices WHERE ip_address IS NOT NULL"
-                ).fetchall()}
+            used = self._get_used_ips()
+            # Also exclude IPs the DHCP server has already promised to other switches
+            # that haven't registered yet — prevents double-allocation during
+            # simultaneous multi-switch adoption.
+            used |= {e['ip'] for e in self._python_dhcp.get_leases()}
             try:
                 start = int(ipaddress.IPv4Address(pool_start))
                 end   = int(ipaddress.IPv4Address(pool_end))
