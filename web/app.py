@@ -105,7 +105,7 @@ def _collect_device_telemetry(device_info, username, password):
 
     if mgmt_type == 'ssh':
         try:
-            connector = NetmikoConnector(ip, username, password, timeout=10)
+            connector = NetmikoConnector(ip, username, password, timeout=5)
             if connector.connect():
                 device_data['telemetry'] = DeviceTelemetry.collect_from_device(connector)
                 # BGP via SSH
@@ -122,7 +122,7 @@ def _collect_device_telemetry(device_info, username, password):
 
     elif mgmt_type == 'eapi':
         try:
-            connector = EAPIConnector(ip, username, password, timeout=10)
+            connector = EAPIConnector(ip, username, password, timeout=5)
             if connector.connect():
                 device_data['telemetry'] = DeviceTelemetry.collect_from_device(connector)
                 # BGP via eAPI
@@ -156,6 +156,7 @@ def _collect_device_telemetry(device_info, username, password):
             device_data['telemetry']['error'] = str(e)
 
     elif mgmt_type == 'gnmi':
+        connector = None
         try:
             from connectors.gnmi_connector import GNMIConnector
             port = int(gnmi_port) if gnmi_port else 6030
@@ -192,6 +193,9 @@ def _collect_device_telemetry(device_info, username, password):
                 device_data['telemetry']['bgp'] = {}
         except Exception as e:
             device_data['telemetry']['error'] = str(e)
+        finally:
+            if connector is not None:
+                connector.disconnect()
 
     return device_data
 
@@ -1331,9 +1335,12 @@ def add_device():
                 site=request.form['site'],
                 container=request.form.get('container', 'Undefined'),
                 cvp_managed=request.form.get('cvp_managed') == 'on',
-                gnmi_port=int(request.form.get('gnmi_port') or 6030)
+                gnmi_port=int(request.form.get('gnmi_port') or 6030),
+                gnmi_telemetry=request.form.get('gnmi_telemetry') == 'on',
             )
             inventory_mgr.add_device(device)
+            if device.gnmi_telemetry:
+                _update_gnmic_targets()
             flash(f'Device {device.hostname} added successfully', 'success')
             return redirect(url_for('devices'))
         except Exception as e:
@@ -1430,10 +1437,12 @@ def edit_device(hostname):
                 site=request.form['site'],
                 container=request.form.get('container', 'Undefined'),
                 cvp_managed=request.form.get('cvp_managed') == 'on',
-                gnmi_port=int(request.form.get('gnmi_port') or 6030)
+                gnmi_port=int(request.form.get('gnmi_port') or 6030),
+                gnmi_telemetry=request.form.get('gnmi_telemetry') == 'on',
             )
             success = inventory_mgr.update_device(hostname, device)
             if success:
+                _update_gnmic_targets()
                 flash(f'Device {device.hostname} updated successfully', 'success')
                 return redirect(url_for('devices'))
             else:
@@ -1459,6 +1468,7 @@ def delete_device(hostname):
             app.logger.info(f"Device {hostname} deleted successfully")
             # Clean up any ZTP lease record that references this device
             ztp_mgr.delete_lease_by_hostname(hostname)
+            _update_gnmic_targets()
             flash(f'Device {hostname} deleted successfully', 'success')
             return jsonify({'success': True, 'message': f'Device {hostname} deleted'}), 200
         else:
@@ -4558,6 +4568,38 @@ def _probe_mgmt_type(ip: str, gnmi_port: int = 6030) -> str:
     return 'eapi'   # fall back to eAPI — connector will retry over HTTP
 
 
+_GNMIC_TARGETS_PATH = '/app/gnmic-targets.yml'
+
+def _update_gnmic_targets():
+    """Rewrite the gnmic dynamic targets file from all gNMI devices in inventory.
+
+    gnmic watches this file (loader: type: file, watch-config: true) and picks
+    up additions and removals without requiring a restart.
+    Called after any gNMI device is added, edited, or deleted.
+    """
+    import yaml as _yaml
+    try:
+        devices = inventory_mgr.get_devices_by_filter(gnmi_telemetry=True)
+        targets = {}
+        for d in devices:
+            port = d.gnmi_port or 6030
+            key  = f'{d.ip_address}:{port}'
+            targets[key] = {'name': d.hostname}
+        content = (
+            '# Kármán auto-generated gNMI targets — do not edit manually.\n'
+            '# Rewritten on every device add/edit/delete in Kármán inventory.\n'
+            '# gnmic file loader format: targets at top level (no "targets:" wrapper).\n'
+        )
+        if targets:
+            content += _yaml.dump(targets, default_flow_style=False)
+        # Empty file = no additional targets (gnmic file loader handles empty gracefully)
+        with open(_GNMIC_TARGETS_PATH, 'w') as fh:
+            fh.write(content)
+        app.logger.info(f'[gnmic] Targets file updated — {len(targets)} gNMI device(s)')
+    except Exception as exc:
+        app.logger.warning(f'[gnmic] Failed to update targets file: {exc}')
+
+
 @app.route('/ztp')
 @admin_required
 def ztp_settings():
@@ -4605,14 +4647,15 @@ def admin_settings_ztp():
         'ztp_mgmt_pool_end':     f.get('ztp_mgmt_pool_end', ''),
         'ztp_mgmt_prefix':       f.get('ztp_mgmt_prefix', '24'),
         'ztp_mgmt_gateway':      f.get('ztp_mgmt_gateway', ''),
-        'ztp_mgmt_iface':        f.get('ztp_mgmt_iface', 'Management0'),
+        'ztp_mgmt_iface':        f.get('ztp_mgmt_iface', 'Management1'),
+        'ztp_mgmt_vrf':          f.get('ztp_mgmt_vrf', 'management'),
     }
     ztp_mgr.save_settings(settings)
-    # Restart DHCP if it was running and dhcp settings changed
+    # Start or stop DHCP to match the checkbox — the checkbox IS the control.
     if settings['ztp_dhcp_enabled'] == 'true':
-        status = ztp_mgr.get_dhcp_status()
-        if status.get('running'):
-            ztp_mgr.start_dhcp(settings)
+        ztp_mgr.start_dhcp(settings)   # (re)start to pick up any new settings
+    else:
+        ztp_mgr.stop_dhcp()
     flash('ZTP settings saved', 'success')
     return redirect(url_for('ztp_settings'))
 
@@ -4621,14 +4664,42 @@ def admin_settings_ztp():
 def ztp_script():
     """Serve the ZTP Python script — no auth, called by devices during boot."""
     from flask import Response
+    import ipaddress as _ipaddress
     settings = ztp_mgr.get_settings()
     if settings.get('ztp_enabled') != 'true':
         return jsonify({'error': 'ZTP not enabled'}), 404
-    script = ztp_mgr.generate_ztp_script(settings)
+
+    # When the management pool is active the DHCP server already handed the
+    # switch an IP from the pool range.  That IP is request.remote_addr right
+    # now.  Embed it in the script so the switch doesn't have to rely on the
+    # server-side allocator (which can't see the DHCP in-memory pool across
+    # Gunicorn workers).
+    pre_assigned_ip = ''
+    if settings.get('ztp_mgmt_pool_enabled') == 'true':
+        pool_start = settings.get('ztp_mgmt_pool_start', '')
+        pool_end   = settings.get('ztp_mgmt_pool_end', '')
+        client_ip  = request.remote_addr or ''
+        if pool_start and pool_end and client_ip:
+            try:
+                ip_int    = int(_ipaddress.IPv4Address(client_ip))
+                start_int = int(_ipaddress.IPv4Address(pool_start))
+                end_int   = int(_ipaddress.IPv4Address(pool_end))
+                if start_int <= ip_int <= end_int:
+                    pre_assigned_ip = client_ip
+                    app.logger.info(f'[ZTP] Pre-assigning pool IP {pre_assigned_ip} '
+                                    f'to script request from {client_ip}')
+            except ValueError:
+                pass
+
+    script = ztp_mgr.generate_ztp_script(settings, pre_assigned_ip=pre_assigned_ip)
     return Response(
         script,
         mimetype='text/x-python',
-        headers={'Content-Disposition': 'attachment; filename=karman_ztp.py'},
+        headers={
+            'Content-Disposition': 'attachment; filename=karman_ztp.py',
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+            'Pragma': 'no-cache',
+        },
     )
 
 
@@ -4648,6 +4719,13 @@ def api_device_register():
     ip       = data.get('ip', '').strip()
     mac      = data.get('mac', '').strip()
 
+    # If the switch hasn't been configured yet its hostname is "localhost".
+    # Derive a unique name from the MAC so two unconfigured switches don't
+    # collide on the same inventory entry.
+    if hostname in ('localhost', 'localhost.localdomain', '') and mac:
+        suffix = mac.replace(':', '')[-6:].upper()
+        hostname = f'ztp-{suffix}'
+
     if not hostname or not ip:
         return jsonify({'success': False, 'message': 'hostname and ip are required'}), 400
 
@@ -4664,10 +4742,15 @@ def api_device_register():
                         'message': 'Auto-add disabled — device queued for manual review',
                         'mgmt_ip': ''})
 
-    # Allocate a permanent management IP from the pool (if enabled).
-    # Passing mac lets the allocator return the same IP the DHCP server already
-    # offered to this switch, keeping DHCP IP == inventory IP == static config IP.
-    mgmt_ip = ztp_mgr.allocate_mgmt_ip(mac=mac)
+    # Use the pre-assigned IP if the script already knows it (embedded at
+    # serve time from request.remote_addr).  This bypasses the cross-worker
+    # allocation race entirely.  Fall back to allocate_mgmt_ip() for scripts
+    # generated before this feature was added.
+    pre_assigned_ip = data.get('pre_assigned_ip', '').strip()
+    if pre_assigned_ip and settings.get('ztp_mgmt_pool_enabled') == 'true':
+        mgmt_ip = pre_assigned_ip
+    else:
+        mgmt_ip = ztp_mgr.allocate_mgmt_ip(mac=mac)
     device_ip = mgmt_ip or ip   # permanent IP takes priority over DHCP IP
 
     # Detect or use configured management type.
@@ -4679,6 +4762,9 @@ def api_device_register():
         mgmt_str = _probe_mgmt_type(ip or device_ip)
 
     try:
+        # ZTP base config always includes TerminAttr, so enable gnmi_telemetry
+        # regardless of the probed management_type — after the device reloads,
+        # TerminAttr will be running and gnmic can start scraping it.
         device = Device(
             hostname=hostname,
             ip_address=device_ip,
@@ -4690,11 +4776,15 @@ def api_device_register():
             site=settings.get('ztp_default_site', ''),
             container='',
             cvp_managed=False,
+            gnmi_telemetry=True,
         )
         inventory_mgr.add_device(device)
 
         if mac:
             ztp_mgr.record_registration(mac, hostname)
+
+        # Update gnmic target file — device has gnmi_telemetry=True
+        _update_gnmic_targets()
 
         # Notify all admins
         admins = [u for u in user_mgr.list_all_users() if u.is_admin]
@@ -4726,13 +4816,17 @@ def api_device_register():
 def admin_ztp_dhcp_start():
     settings = ztp_mgr.get_settings()
     result   = ztp_mgr.start_dhcp(settings)
+    if result.get('success'):
+        ztp_mgr.save_settings({'ztp_dhcp_enabled': 'true'})
     return jsonify(result)
 
 
 @app.route('/admin/ztp/dhcp/stop', methods=['POST'])
 @admin_required
 def admin_ztp_dhcp_stop():
-    return jsonify(ztp_mgr.stop_dhcp())
+    result = ztp_mgr.stop_dhcp()
+    ztp_mgr.save_settings({'ztp_dhcp_enabled': 'false'})
+    return jsonify(result)
 
 
 @app.route('/api/ztp/leases')
@@ -4827,6 +4921,38 @@ def api_devices_checkin():
     if device:
         inventory_mgr.update_agent_checkin(hostname, installed=True)
 
+        # On startup: re-probe the management type so gNMI is detected now that
+        # TerminAttr is running.  ZTP registers devices before the startup-config
+        # is applied, so the initial probe (at ZTP time) finds only eAPI/SSH.
+        # After reload the agent's first checkin is the right moment to fix this.
+        if event == 'startup':
+            probe_ip = ip or device.ip_address
+            try:
+                probed_type = _probe_mgmt_type(probe_ip)
+                if probed_type != device.management_type.value:
+                    updated_device = Device(
+                        hostname=device.hostname,
+                        ip_address=device.ip_address,
+                        model=device.model,
+                        serial_number=device.serial_number,
+                        eos_version=device.eos_version,
+                        management_type=DeviceType(probed_type),
+                        role=device.role,
+                        site=device.site,
+                        container=device.container,
+                        cvp_managed=device.cvp_managed,
+                        gnmi_port=device.gnmi_port,
+                        gnmi_telemetry=device.gnmi_telemetry,
+                    )
+                    inventory_mgr.update_device(device.hostname, updated_device)
+                    app.logger.info(
+                        f"[Checkin] {hostname} management type updated "
+                        f"{device.management_type.value} → {probed_type} after startup"
+                    )
+                    _update_gnmic_targets()
+            except Exception as exc:
+                app.logger.debug(f"[Checkin] Management type re-probe failed for {hostname}: {exc}")
+
         # On config_lost: trigger a backup to capture the empty/factory config
         # and notify admins so they can push a replacement configlet.
         if event == 'config_lost':
@@ -4857,6 +4983,16 @@ def api_devices_checkin():
 
     app.logger.info(f"[Checkin] {hostname} ip={ip} event={event}")
     return jsonify({'success': True, 'message': 'check-in recorded'})
+
+
+# ==================== Startup tasks ====================
+
+# Populate the gnmic targets file from inventory so gnmic picks up all
+# existing gNMI devices immediately on container start.
+try:
+    _update_gnmic_targets()
+except Exception:
+    pass
 
 
 # ==================== Main ====================

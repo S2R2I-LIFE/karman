@@ -439,10 +439,18 @@ class DeviceTelemetry:
         }
 
         try:
-            if not connector.connect():
-                telemetry['error'] = 'gNMI connection failed (check port 6030 / TerminAttr)'
-                return telemetry
+            connected = connector.connect()
+        except Exception as e:
+            telemetry['error'] = str(e)
+            connector.disconnect()
+            return telemetry
 
+        if not connected:
+            telemetry['error'] = 'gNMI connection failed (check port 6030 / TerminAttr)'
+            connector.disconnect()
+            return telemetry
+
+        try:
             # --- Interfaces (eos_native Sysdb path, always populated) ---
             # NOTE: gRPC channels are lazy — connect() succeeding only means the
             # channel object was created, not that the device actually responded.
@@ -465,16 +473,8 @@ class DeviceTelemetry:
             except Exception as e:
                 print(f"gNMI interface collection error: {e}", file=__import__('sys').stderr)
                 telemetry['error'] = f'gNMI query error: {e}'
-
+        finally:
             connector.disconnect()
-
-        except Exception as e:
-            print(f"gNMI telemetry error: {e}", file=__import__('sys').stderr)
-            telemetry['error'] = str(e)
-            try:
-                connector.disconnect()
-            except Exception:
-                pass
 
         return telemetry
 

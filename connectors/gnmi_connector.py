@@ -214,12 +214,20 @@ class GNMIConnector:
         except Exception as e:
             print(f"gNMI connection failed to {self.host}:{self.port}: {e}",
                   file=sys.stderr)
+            # Close the gRPC channel if it was opened before the error — its
+            # background _poll_connectivity thread would otherwise leak forever.
+            if self._client is not None:
+                try:
+                    self._client.__exit__(None, None, None)
+                except Exception:
+                    pass
+                self._client = None
             self._connected = False
             return False
 
     def disconnect(self):
         """Close the gNMI connection gracefully."""
-        if self._client and self._connected:
+        if self._client is not None:
             try:
                 self._client.__exit__(None, None, None)
             except Exception:
